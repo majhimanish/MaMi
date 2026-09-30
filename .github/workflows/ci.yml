@@ -57,11 +57,18 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           ./gradlew --no-daemon assembleDebug "-Pmami.serverUrl=$MAMI_SERVER_URL"
-      - name: Check 16 KB page alignment
+      - name: Check the APK
         run: |
-          for so in $(find android/app/build -path '*merged_native_libs*' -name 'libmami_core.so'); do
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$apk" | grep -E 'lib/.*\.so$'
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -l "$apk" | grep -q "lib/$abi/libmami_core.so" || { echo "missing core for $abi"; exit 1; }
+          done
+          libs=$(find android/app/build -path '*merged_native_libs*' -name 'libmami_core.so')
+          test -n "$libs" || { echo "no native libraries found"; exit 1; }
+          for so in $libs; do
             echo "$so"
-            readelf -lW "$so" | awk '/LOAD/ { if ($NF != "0x4000") { print "misaligned"; exit 1 } }'
+            readelf -lW "$so" | awk '/LOAD/ { if ($NF != "0x4000") { print "not 16 KB aligned"; exit 1 } }'
           done
       - uses: actions/upload-artifact@v4
         with:
