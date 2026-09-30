@@ -1,0 +1,7 @@
+[bindings.kotlin]
+package_name = "app.mami.core"
+cdylib_name = "mami_core"
+
+[bindings.swift]
+module_name = "MamiCore"
+ffi_module_name = "MamiCoreFFI"

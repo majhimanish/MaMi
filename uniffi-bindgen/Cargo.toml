@@ -1,0 +1,10 @@
+[package]
+name = "uniffi-bindgen"
+version = "0.1.0"
+description = "Generates Kotlin/Swift bindings for mami-core"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+uniffi = { version = "0.32", features = ["cli"] }

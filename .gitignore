@@ -1,0 +1,27 @@
+# Rust
+/target/
+
+# Server data and secrets
+*.db
+*.db-shm
+*.db-wal
+*service-account*.json
+.env
+
+# Android
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/app/google-services.json
+android/captures/
+android/.idea/
+*.iml
+*.keystore
+*.jks
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
