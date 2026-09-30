@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two overlapping hearts. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M47,76 C47,76 30,64.5 30,52.5 C30,46.5 34.5,42 40,42 C43.3,42 45.9,43.7 47,46.2 C48.1,43.7 50.7,42 54,42 C59.5,42 64,46.5 64,52.5 C64,64.5 47,76 47,76 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M61,70 C61,70 44,58.5 44,46.5 C44,40.5 48.5,36 54,36 C57.3,36 59.9,37.7 61,40.2 C62.1,37.7 64.7,36 68,36 C73.5,36 78,40.5 78,46.5 C78,58.5 61,70 61,70 Z" />
+</vector>
