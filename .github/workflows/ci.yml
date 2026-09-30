@@ -64,6 +64,7 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86_64; do
             unzip -l "$apk" | grep -q "lib/$abi/libmami_core.so" || { echo "missing core for $abi"; exit 1; }
           done
+          if unzip -l "$apk" | grep -E 'lib/(x86|armeabi|mips|mips64)/'; then echo "unexpected ABI packaged"; exit 1; fi
           libs=$(find android/app/build -path '*merged_native_libs*' -name 'libmami_core.so')
           test -n "$libs" || { echo "no native libraries found"; exit 1; }
           for so in $libs; do
