@@ -22,6 +22,19 @@ All settings are environment variables:
 
 Any small Linux VM works (1 vCPU / 512 MB is plenty for the first users).
 
+With Docker (build from the repository root):
+
+```sh
+docker build -f server/Dockerfile -t mami-server .
+docker run -d --name mami --restart always -p 127.0.0.1:8080:8080 \
+  -v mami-data:/data \
+  -e MAMI_SMTP_URL=... -e MAMI_MAIL_FROM=... \
+  -e MAMI_FCM_SERVICE_ACCOUNT=/data/firebase-service-account.json \
+  mami-server
+```
+
+Or as a plain binary:
+
 ```sh
 cargo build --release -p mami-server
 scp target/release/mami-server server:/opt/mami/
