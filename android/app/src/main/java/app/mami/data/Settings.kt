@@ -33,10 +33,19 @@ class Settings(context: Context) {
         get() = prefs.getString(KEY_SERVER, null)?.takeIf { it.isNotBlank() } ?: BuildConfig.DEFAULT_SERVER_URL
         set(value) = prefs.edit { putString(KEY_SERVER, value.trim().trimEnd('/')) }
 
+    @Volatile
+    private var cachedToken: String? = null
+
+    /** The sign-in token, kept in memory after the first Keystore decryption. */
     var token: String?
-        get() = prefs.getString(KEY_TOKEN, null)?.let(SecretBox::open)?.decodeToString()
-        set(value) = prefs.edit {
-            if (value == null) remove(KEY_TOKEN) else putString(KEY_TOKEN, SecretBox.seal(value.encodeToByteArray()))
+        get() = cachedToken ?: prefs.getString(KEY_TOKEN, null)?.let(SecretBox::open)?.decodeToString()?.also {
+            cachedToken = it
+        }
+        set(value) {
+            cachedToken = value
+            prefs.edit {
+                if (value == null) remove(KEY_TOKEN) else putString(KEY_TOKEN, SecretBox.seal(value.encodeToByteArray()))
+            }
         }
 
     var email: String?
@@ -134,6 +143,7 @@ class Settings(context: Context) {
 
     /** Forgets everything except the server address. */
     fun clearAll() {
+        cachedToken = null
         val server = prefs.getString(KEY_SERVER, null)
         prefs.edit(commit = true) {
             clear()
