@@ -39,10 +39,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
-      - name: Install Android platform
+      - name: Android platforms available
         run: |
+          ls "$ANDROID_HOME/platforms" || true
           SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
-          yes | "$SDKMANAGER" --install "platforms;android-37" > /dev/null
+          "$SDKMANAGER" --list 2>/dev/null | grep -E "platforms;android-3[6-9]" | sort -u || true
       - uses: gradle/actions/setup-gradle@v4
       - name: Firebase config (optional)
         env:
