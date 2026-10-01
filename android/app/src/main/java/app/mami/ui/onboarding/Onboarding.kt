@@ -18,6 +18,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -123,14 +125,17 @@ fun OnboardingScaffold(
                     }
                 }
             }
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
+                // Short screens sit in the middle; long ones scroll from the top.
                 Column(
                     Modifier
                         .widthIn(max = 520.dp)
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
+                        .heightIn(min = maxHeight)
                         .padding(horizontal = 24.dp)
                         .padding(bottom = 28.dp),
+                    verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                     content = content,
                 )
@@ -424,7 +429,7 @@ fun SharingScreen(ui: UiController) {
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { finish() }
 
     OnboardingScaffold(ui, Stage.Sharing) {
-        ScreenTitle("🫶", "Share what helps", "So your partner never has to wonder why you're quiet. All optional, all encrypted.")
+        ScreenTitle("🤝", "Share what helps", "So your partner never has to wonder why you're quiet. All optional, all encrypted.")
 
         Text("They'll see something like", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))

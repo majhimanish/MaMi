@@ -4,6 +4,16 @@ A private messenger for couples. Two people, one encrypted conversation, and
 enough context about each other's phone that nobody has to guess why the other
 one went quiet.
 
+<p align="center">
+  <img src="docs/screenshots/01-welcome.png" width="200" alt="Welcome">
+  <img src="docs/screenshots/08-chat.png" width="200" alt="Chat">
+  <img src="docs/screenshots/11-partner.png" width="200" alt="Partner sheet">
+  <img src="docs/screenshots/16-chat-sunset-dark.png" width="200" alt="Chat, Sunset theme, dark">
+</p>
+
+More in [`docs/screenshots/`](docs/screenshots). CI renders them from the
+real Compose screens on every push.
+
 ## What it does today (Android, first test release)
 
 - **Sign in with email.** A 6-digit code, no password.
@@ -30,6 +40,30 @@ one went quiet.
   you) with their own notification channel.
 - **Privacy**: keys sealed by the Android Keystore, no cloud backups, optional
   hidden notification text, content-free push notifications.
+
+## Debug builds: skip anything, try everything
+
+Debug APKs talk to the real server, but they also carry a **demo mode**: a
+simulated partner ("Maya") who lives on the phone. In demo mode the whole app
+works with no server and no second phone.
+
+- **Skip ›** in the top corner of every sign-in and setup step jumps ahead
+  (and switches to demo mode).
+- In demo mode any email and code work (`000000` shows the error state), and
+  Maya accepts a new invite after a few seconds.
+- Maya replies to your messages, and you can watch each message go
+  sending → sent → delivered → seen.
+- The draggable **🐞** button opens the playground:
+  - jump straight to any screen;
+  - switch between the real server and demo mode (it remembers your choice);
+  - control Maya's phone: online, battery and charging, Wi-Fi or data,
+    signal, silent/Do Not Disturb, time zone, status;
+  - set off events: a message, a nudge, a dying-battery alert, Maya's phone
+    dying, night time, a key change, losing the connection;
+  - change the colour theme and dark mode;
+  - start over.
+
+Release builds have none of this.
 
 ## Repository layout
 

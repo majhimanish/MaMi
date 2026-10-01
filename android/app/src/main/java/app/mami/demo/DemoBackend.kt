@@ -505,7 +505,7 @@ class DemoBackend(
         "Same here 💕",
         "On my way 🚗",
         "Can't wait to see you",
-        "You're the best 🫶",
+        "You're the best 🥰",
     ).random(Random(clock()))
 
     private companion object {

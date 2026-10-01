@@ -52,5 +52,14 @@ MAMI_KEYSTORE_FILE, MAMI_KEYSTORE_PASSWORD, MAMI_KEY_ALIAS, MAMI_KEY_PASSWORD
 | `sync` | `Messenger` (the orchestrator: pairing, sessions, send/receive, receipts, status), push service, background workers, notifications |
 | `device` | Reads battery, charging, network, signal, ringer and Do Not Disturb; watches for changes |
 | `ui` | Compose screens: sign-in, profile, sharing, pairing, chat, partner sheet, settings, safety code |
+| `demo` | `DemoBackend`: a simulated partner behind the same `MamiBackend` interface as `Messenger`, used by debug builds and the screenshot tests |
+| `ui/debug` | The 🐞 playground (debug builds only): jump to any screen, drive the demo partner, change the theme |
 
 What each phone can and can't know is described in `docs/PROTOCOL.md`.
+
+## Screenshots
+
+`./gradlew recordRoborazziDebug` renders every screen with Robolectric into
+`docs/screenshots/`, using the demo partner. It needs the host build of the
+Rust core first (`cargo build -p mami-core` from the repository root). CI does
+both and commits the images on `claude/` branches.
