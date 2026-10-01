@@ -17,10 +17,17 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import java.io.File
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
+import okio.buffer
+import okio.sink
+import okio.source
 
 /** An error answer from the server. [code] is the machine-readable reason, like "wrong_code". */
 class ApiException(val status: Int, val code: String) : IOException("HTTP $status: $code")
@@ -114,6 +121,20 @@ data class AcceptedDto(val id: String, @SerialName("at_ms") val atMs: Long)
 @Serializable
 private data class KeyCountDto(@SerialName("one_time_key_count") val oneTimeKeyCount: Long)
 
+@Serializable
+data class BlobCreatedDto(val id: String, val size: Long)
+
+@Serializable
+data class IceServerDto(val urls: List<String>, val username: String? = null, val credential: String? = null)
+
+@Serializable
+data class IceServersDto(@SerialName("ice_servers") val iceServers: List<IceServerDto>, @SerialName("ttl_s") val ttlS: Long)
+
+/** Reports bytes moved so far out of the total. */
+fun interface Progress {
+    fun update(done: Long, total: Long)
+}
+
 /** The MaMi REST API. Every call throws [IOException] (including [ApiException]) on failure. */
 class Api(private val settings: Settings, private val http: OkHttpClient) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
@@ -191,6 +212,78 @@ class Api(private val settings: Settings, private val http: OkHttpClient) {
         call("POST", "/v1/envelopes/ack", buildJsonObject { putJsonArray("seqs") { seqs.forEach { add(it) } } })
     }
 
+    /** Uploads an already encrypted attachment. */
+    suspend fun uploadBlob(file: File, progress: Progress): BlobCreatedDto = withContext(Dispatchers.IO) {
+        val body = object : RequestBody() {
+            override fun contentType(): MediaType = "application/octet-stream".toMediaType()
+            override fun contentLength(): Long = file.length()
+            override fun writeTo(sink: BufferedSink) {
+                val total = file.length()
+                var done = 0L
+                file.source().use { source ->
+                    while (true) {
+                        val read = source.read(sink.buffer, CHUNK)
+                        if (read == -1L) break
+                        done += read
+                        sink.flush()
+                        progress.update(done, total)
+                    }
+                }
+            }
+        }
+        val request = authorized("/v1/blobs").post(body).build()
+        http.newCall(request).execute().use { response ->
+            val text = response.body.string()
+            if (!response.isSuccessful) throw errorFor(response.code, text)
+            MamiJson.decodeFromString(BlobCreatedDto.serializer(), text)
+        }
+    }
+
+    /** Downloads an encrypted attachment into [into]. */
+    suspend fun downloadBlob(id: String, into: File, progress: Progress) = withContext(Dispatchers.IO) {
+        val request = authorized("/v1/blobs/$id").get().build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw errorFor(response.code, response.body.string())
+            val total = response.body.contentLength()
+            var done = 0L
+            into.sink().buffer().use { sink ->
+                response.body.source().use { source ->
+                    while (true) {
+                        val read = source.read(sink.buffer, CHUNK)
+                        if (read == -1L) break
+                        done += read
+                        sink.emitCompleteSegments()
+                        progress.update(done, total)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Tells the server the attachment is safely on this phone. */
+    suspend fun deleteBlob(id: String) {
+        call("DELETE", "/v1/blobs/$id")
+    }
+
+    suspend fun iceServers(): IceServersDto = call("GET", "/v1/calls/ice-servers", null, IceServersDto.serializer())
+
+    private fun authorized(path: String): Request.Builder {
+        val builder = try {
+            Request.Builder().url(settings.serverUrl + path)
+        } catch (e: IllegalArgumentException) {
+            throw ApiException(0, "bad_server_address")
+        }
+        val token = settings.token ?: throw ApiException(401, "unauthorized")
+        return builder.header("Authorization", "Bearer $token")
+    }
+
+    private fun errorFor(status: Int, text: String): ApiException {
+        val code = runCatching {
+            MamiJson.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.content
+        }.getOrNull()
+        return ApiException(status, code ?: "http_$status")
+    }
+
     private suspend fun call(method: String, path: String, body: JsonObject? = null, auth: Boolean = true) {
         execute(method, path, body, auth)
     }
@@ -222,13 +315,12 @@ class Api(private val settings: Settings, private val http: OkHttpClient) {
             builder.method(method, requestBody)
             http.newCall(builder.build()).execute().use { response ->
                 val text = response.body.string()
-                if (!response.isSuccessful) {
-                    val code = runCatching {
-                        MamiJson.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.content
-                    }.getOrNull()
-                    throw ApiException(response.code, code ?: "http_${response.code}")
-                }
+                if (!response.isSuccessful) throw errorFor(response.code, text)
                 text
             }
         }
+
+    private companion object {
+        const val CHUNK = 64 * 1024L
+    }
 }

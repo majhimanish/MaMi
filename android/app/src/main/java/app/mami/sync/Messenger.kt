@@ -1,14 +1,22 @@
 package app.mami.sync
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import app.mami.core.AlertKind
 import app.mami.core.Ciphertext
 import app.mami.core.CoreException
 import app.mami.core.DeviceStatus
+import app.mami.core.LinkPreview
+import app.mami.core.MediaInfo
+import app.mami.core.MediaKind
 import app.mami.core.NudgeKind
 import app.mami.core.Payload
 import app.mami.core.ShareKind
+import app.mami.core.decryptFile
+import app.mami.core.encryptFile
 import app.mami.core.payloadFromJson
 import app.mami.core.payloadToJson
 import app.mami.core.verifyIdentity
@@ -30,17 +38,27 @@ import app.mami.data.SendRequestDto
 import app.mami.data.ServerFrame
 import app.mami.data.Settings
 import app.mami.data.db.MamiDatabase
+import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
 import app.mami.data.db.MessageState
+import app.mami.data.db.OutboxEntity
+import app.mami.data.db.Transfer
 import app.mami.device.DeviceStatusCollector
 import app.mami.device.RawStatus
+import app.mami.media.LinkPreviewer
+import app.mami.media.MediaLibrary
+import app.mami.media.PreparedMedia
+import app.mami.media.VoicePlayer
+import app.mami.media.VoiceRecording
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
+import java.io.File
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -49,10 +67,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
 /** Thrown when there is no encrypted session with the partner yet. */
 class NoSessionException : IOException("no secure session with the partner yet")
@@ -72,9 +92,12 @@ class Messenger(
     db: MamiDatabase,
     private val collector: DeviceStatusCollector,
     private val notifications: Notifications,
+    private val media: MediaLibrary,
+    private val linkPreviewer: LinkPreviewer,
     private val scope: CoroutineScope,
 ) : MamiBackend {
     private val dao = db.messages()
+    private val outbox = db.outbox()
 
     private val _signedIn = MutableStateFlow(settings.token != null)
     override val signedIn: StateFlow<Boolean> = _signedIn.asStateFlow()
@@ -122,6 +145,9 @@ class Messenger(
     override val shares: StateFlow<Set<ShareKind>> = settings.sharesFlow
     override val quickStatus: StateFlow<SavedQuickStatus?> = settings.quickStatusFlow
 
+    private val _progress = MutableStateFlow<Map<String, Float>>(emptyMap())
+    override val transferProgress: StateFlow<Map<String, Float>> = _progress.asStateFlow()
+
     /** Set by the chat screen while it is visible. */
     @Volatile
     override var chatVisible = false
@@ -132,6 +158,10 @@ class Messenger(
     private val bootstrapLock = Mutex()
     private val syncLock = Mutex()
     private val outboxLock = Mutex()
+    private val transferLock = Mutex()
+
+    @Volatile
+    private var transfersRequested = false
     private val processedSeqs = LinkedHashSet<Long>()
     private var typingReset: Job? = null
     private var lastTypingSentAt = 0L
@@ -166,6 +196,7 @@ class Messenger(
             refresh()
             publishStatus(force = false)
         }
+        kickTransfers()
     }
 
     fun onBackground() {
@@ -181,6 +212,7 @@ class Messenger(
             flushOutbox()
             sync()
         }
+        kickTransfers()
     }
 
     /** Something about the phone changed (battery, charging, ringer, network). */
@@ -196,6 +228,7 @@ class Messenger(
         quietly { sync() }
         quietly { flushOutbox() }
         quietly { publishStatus(force = false) }
+        quietly { runTransfers() }
     }
 
     /** A push arrived: fetch what's waiting and refresh our status for the partner. */
@@ -269,6 +302,12 @@ class Messenger(
             settings.serverUrl = value
         }
 
+    override var linkPreviews: Boolean
+        get() = settings.linkPreviews
+        set(value) {
+            settings.linkPreviews = value
+        }
+
     override val email: String? get() = settings.email
 
     // ---- pairing ------------------------------------------------------------------
@@ -330,11 +369,281 @@ class Messenger(
 
     // ---- conversation ---------------------------------------------------------------
 
-    override fun sendText(text: String, replyTo: String?) {
+    override fun sendText(text: String, replyTo: String?, link: LinkPreview?) {
         val body = text.trim()
         if (body.isEmpty()) return
-        queue(MessageKind.TEXT, body, replyTo = replyTo)
+        val now = System.currentTimeMillis()
+        val message = MessageEntity(
+            id = newId(),
+            fromMe = true,
+            kind = MessageKind.TEXT,
+            body = body,
+            sentAtMs = now,
+            sortAtMs = now,
+            state = MessageState.PENDING,
+            replyTo = replyTo,
+            linkUrl = link?.url,
+            linkTitle = link?.title,
+            linkDescription = link?.description,
+            linkImage = link?.image,
+        )
+        launchSafely {
+            dao.insert(message)
+            flushOutbox()
+        }
         stopTyping()
+    }
+
+    // ---- attachments ------------------------------------------------------------------
+
+    override suspend fun sendMedia(uris: List<Uri>, caption: String?, viewOnce: Boolean, asDocument: Boolean, replyTo: String?) {
+        uris.forEachIndexed { index, uri ->
+            val prepared = media.prepare(uri, asDocument)
+            // A caption goes with the first photo of a batch, like a photo album.
+            queueMedia(prepared, if (index == 0) caption else null, viewOnce, if (index == 0) replyTo else null)
+        }
+    }
+
+    override fun sendVoice(recording: VoiceRecording, replyTo: String?) {
+        launchSafely { queueMedia(media.prepareVoice(recording.file, recording.durationMs, recording.levels), null, false, replyTo) }
+    }
+
+    override fun newVoiceFile(): File = media.newFile("m4a")
+
+    override fun fileFor(message: MessageEntity): File? = message.mediaFile?.let(media::file)?.takeIf(File::exists)
+
+    private suspend fun queueMedia(prepared: PreparedMedia, caption: String?, viewOnce: Boolean, replyTo: String?) {
+        val now = System.currentTimeMillis()
+        dao.insert(
+            MessageEntity(
+                id = newId(),
+                fromMe = true,
+                kind = MessageKind.MEDIA,
+                body = caption?.trim().orEmpty(),
+                sentAtMs = now,
+                sortAtMs = now,
+                state = MessageState.PENDING,
+                replyTo = replyTo,
+                mediaKind = prepared.kind,
+                mediaFile = prepared.fileName,
+                mediaMime = prepared.mime,
+                mediaName = prepared.name,
+                mediaSize = prepared.size,
+                mediaWidth = prepared.width,
+                mediaHeight = prepared.height,
+                mediaDurationMs = prepared.durationMs,
+                mediaThumb = prepared.thumbnail,
+                mediaWaveform = prepared.waveform,
+                transfer = Transfer.UPLOAD,
+                viewOnce = viewOnce && (prepared.kind == MediaType.PHOTO || prepared.kind == MediaType.VIDEO),
+            ),
+        )
+        kickTransfers()
+    }
+
+    override fun retryTransfer(id: String) {
+        launchSafely {
+            val message = dao.get(id) ?: return@launchSafely
+            when (message.transfer) {
+                Transfer.FAILED_UPLOAD -> dao.setTransfer(id, Transfer.UPLOAD)
+                Transfer.FAILED_DOWNLOAD, Transfer.ASK -> dao.setTransfer(id, Transfer.DOWNLOAD)
+            }
+            kickTransfers()
+        }
+    }
+
+    override suspend fun saveToDevice(message: MessageEntity): Boolean {
+        val file = message.mediaFile ?: return false
+        return media.saveToDevice(file, message.mediaKind, message.mediaMime ?: "application/octet-stream", message.mediaName)
+    }
+
+    private fun kickTransfers() {
+        if (settings.token == null) return
+        launchSafely { runTransfers() }
+    }
+
+    /** Uploads and downloads waiting attachments, one at a time, oldest first. */
+    private suspend fun runTransfers() {
+        transfersRequested = true
+        if (!transferLock.tryLock()) return
+        try {
+            while (transfersRequested) {
+                transfersRequested = false
+                for (message in dao.waitingTransfers()) {
+                    val ok = when (message.transfer) {
+                        Transfer.UPLOAD -> upload(message)
+                        Transfer.DOWNLOAD -> download(message)
+                        else -> true
+                    }
+                    // No connection: try again when there is one.
+                    if (!ok) return
+                }
+            }
+        } finally {
+            transferLock.unlock()
+        }
+    }
+
+    /** Encrypts and uploads one of my attachments. False means "offline, retry later". */
+    private suspend fun upload(message: MessageEntity): Boolean {
+        val source = fileFor(message)
+        if (source == null) {
+            dao.setTransfer(message.id, Transfer.FAILED_UPLOAD)
+            return true
+        }
+        val encrypted = media.tempFile(".enc")
+        try {
+            val key = withContext(Dispatchers.IO) { encryptFile(source.path, encrypted.path) }
+            setProgress(message.id, 0f)
+            val blob = api.uploadBlob(encrypted) { done, total -> setProgress(message.id, done.toFloat() / total.coerceAtLeast(1)) }
+            dao.markUploaded(message.id, blob.id, key.key)
+            if (message.viewOnce) {
+                // View once means once: not even the sender keeps a copy to look at again.
+                media.delete(message.mediaFile)
+                dao.clearMediaFile(message.id)
+            }
+            flushOutbox()
+            return true
+        } catch (e: ApiException) {
+            Log.w(TAG, "upload of ${message.id} refused: ${e.code}")
+            dao.setTransfer(message.id, Transfer.FAILED_UPLOAD)
+            return true
+        } catch (e: CoreException) {
+            Log.w(TAG, "could not encrypt ${message.id}", e)
+            dao.setTransfer(message.id, Transfer.FAILED_UPLOAD)
+            return true
+        } catch (e: IOException) {
+            Log.d(TAG, "upload of ${message.id} waits: ${e.message}")
+            return false
+        } finally {
+            encrypted.delete()
+            clearProgress(message.id)
+        }
+    }
+
+    /** Downloads and decrypts one of their attachments. False means "offline, retry later". */
+    private suspend fun download(message: MessageEntity): Boolean {
+        val blobId = message.blobId
+        val key = message.blobKey
+        if (blobId == null || key == null) {
+            dao.setTransfer(message.id, Transfer.GONE)
+            return true
+        }
+        val encrypted = media.tempFile(".enc")
+        val out = media.newFile(MediaLibrary.extensionFor(message.mediaMime, message.mediaName))
+        try {
+            setProgress(message.id, 0f)
+            api.downloadBlob(blobId, encrypted) { done, total -> setProgress(message.id, if (total > 0) done.toFloat() / total else 0f) }
+            withContext(Dispatchers.IO) { decryptFile(encrypted.path, out.path, key) }
+            dao.markDownloaded(message.id, out.name)
+            // It's safely here; the server doesn't need to keep it.
+            quietly { api.deleteBlob(blobId) }
+            return true
+        } catch (e: ApiException) {
+            out.delete()
+            dao.setTransfer(message.id, if (e.status == 404) Transfer.GONE else Transfer.FAILED_DOWNLOAD)
+            return true
+        } catch (e: CoreException) {
+            Log.w(TAG, "attachment ${message.id} failed to decrypt", e)
+            out.delete()
+            dao.setTransfer(message.id, Transfer.FAILED_DOWNLOAD)
+            return true
+        } catch (e: IOException) {
+            out.delete()
+            Log.d(TAG, "download of ${message.id} waits: ${e.message}")
+            return false
+        } finally {
+            encrypted.delete()
+            clearProgress(message.id)
+        }
+    }
+
+    private fun setProgress(id: String, value: Float) = _progress.update { it + (id to value.coerceIn(0f, 1f)) }
+
+    private fun clearProgress(id: String) = _progress.update { it - id }
+
+    /** Photos and voice notes always come straight away; big videos and files wait for Wi-Fi or a tap. */
+    private fun autoDownload(kind: MediaKind, size: Long): Boolean {
+        if (kind == MediaKind.PHOTO || kind == MediaKind.VOICE || size <= AUTO_DOWNLOAD_BYTES) return true
+        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return true
+        return !connectivity.isActiveNetworkMetered
+    }
+
+    // ---- after sending -------------------------------------------------------------------
+
+    override fun react(id: String, emoji: String?) {
+        launchSafely {
+            dao.setMyReaction(id, emoji)
+            enqueue(Payload.Reaction(id, emoji, System.currentTimeMillis()))
+        }
+    }
+
+    override fun edit(id: String, text: String) {
+        val body = text.trim()
+        if (body.isEmpty()) return
+        launchSafely {
+            val now = System.currentTimeMillis()
+            if (dao.edit(id, fromMe = true, body = body, atMs = now) > 0) enqueue(Payload.Edit(id, body, now))
+        }
+    }
+
+    override fun unsend(id: String) {
+        launchSafely {
+            val message = dao.get(id)?.takeIf { it.fromMe } ?: return@launchSafely
+            media.delete(message.mediaFile)
+            if (message.state == MessageState.PENDING) {
+                // It never left this phone: just take it back.
+                dao.delete(id)
+                return@launchSafely
+            }
+            message.blobId?.let { blob -> quietly { api.deleteBlob(blob) } }
+            dao.unsend(id, fromMe = true)
+            enqueue(Payload.Unsend(id, System.currentTimeMillis()))
+        }
+    }
+
+    override fun deleteForMe(id: String) {
+        launchSafely {
+            dao.get(id)?.let { media.delete(it.mediaFile) }
+            dao.delete(id)
+        }
+    }
+
+    override fun setPinned(id: String, pinned: Boolean) {
+        launchSafely {
+            val now = System.currentTimeMillis()
+            dao.setPinned(id, if (pinned) now else null)
+            enqueue(Payload.Pin(id, pinned, now))
+        }
+    }
+
+    override fun setStarred(id: String, starred: Boolean) {
+        launchSafely { dao.setStarred(id, starred) }
+    }
+
+    override fun viewOnceOpened(id: String) {
+        launchSafely {
+            val message = dao.get(id)?.takeIf { !it.fromMe && it.viewOnce } ?: return@launchSafely
+            media.delete(message.mediaFile)
+            val now = System.currentTimeMillis()
+            dao.markOpened(id, now)
+            enqueue(Payload.Opened(id, now))
+        }
+    }
+
+    override suspend fun search(query: String): List<MessageEntity> {
+        val words = query.trim()
+        if (words.isEmpty()) return emptyList()
+        val escaped = words.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return dao.search("%$escaped%")
+    }
+
+    override suspend fun linkPreview(url: String): LinkPreview? = if (settings.linkPreviews) linkPreviewer.fetch(url) else null
+
+    /** Queues a small payload that must reach the partner, even if the app closes first. */
+    private suspend fun enqueue(payload: Payload) {
+        outbox.add(OutboxEntity(newId(), payloadToJson(payload), System.currentTimeMillis()))
+        flushOutbox()
     }
 
     override fun sendNudge(kind: NudgeKind) = queue(MessageKind.NUDGE, kind.name)
@@ -503,6 +812,8 @@ class Messenger(
         outboxLock.withLock {
             if (settings.token == null || _partner.value == null) return
             for (message in dao.pendingOutgoing()) {
+                // Attachments go out once their file is uploaded.
+                if (message.isMedia && (message.transfer != Transfer.DONE || message.blobId == null)) continue
                 val payload = payloadFor(message) ?: continue
                 val accepted = try {
                     sendPayload(payload, KIND_MESSAGE, message.id, push = true)
@@ -511,6 +822,20 @@ class Messenger(
                     return
                 }
                 dao.markSent(message.id, accepted.atMs)
+            }
+            for (item in outbox.all()) {
+                val payload = runCatching { payloadFromJson(item.payloadJson) }.getOrNull()
+                if (payload == null) {
+                    outbox.remove(item.id)
+                    continue
+                }
+                try {
+                    sendPayload(payload, KIND_MESSAGE, item.id, push = false)
+                } catch (e: IOException) {
+                    Log.d(TAG, "outbox waits: ${e.message}")
+                    return
+                }
+                outbox.remove(item.id)
             }
             flushReadReceipts()
         }
@@ -528,7 +853,33 @@ class Messenger(
     }
 
     private fun payloadFor(message: MessageEntity): Payload? = when (message.kind) {
-        MessageKind.TEXT -> Payload.Text(message.id, message.body, message.sentAtMs, message.replyTo)
+        MessageKind.TEXT -> Payload.Text(
+            message.id,
+            message.body,
+            message.sentAtMs,
+            message.replyTo,
+            message.linkUrl?.let { LinkPreview(it, message.linkTitle, message.linkDescription, message.linkImage) },
+        )
+        MessageKind.MEDIA -> Payload.Media(
+            id = message.id,
+            sentAtMs = message.sentAtMs,
+            replyTo = message.replyTo,
+            media = MediaInfo(
+                kind = MediaKind.entries.firstOrNull { it.name == message.mediaKind } ?: MediaKind.FILE,
+                blobId = message.blobId ?: return null,
+                key = message.blobKey ?: return null,
+                size = (message.mediaSize ?: 0L).toULong(),
+                mime = message.mediaMime ?: "application/octet-stream",
+                name = message.mediaName,
+                width = message.mediaWidth,
+                height = message.mediaHeight,
+                durationMs = message.mediaDurationMs,
+                thumbnail = message.mediaThumb,
+                waveform = message.mediaWaveform?.let { Base64.decode(it, Base64.NO_WRAP) } ?: ByteArray(0),
+            ),
+            caption = message.body.ifBlank { null },
+            viewOnce = message.viewOnce,
+        )
         MessageKind.NUDGE -> Payload.Nudge(
             message.id,
             NudgeKind.entries.firstOrNull { it.name == message.body } ?: NudgeKind.THINKING_OF_YOU,
@@ -717,9 +1068,56 @@ class Messenger(
                         state = MessageState.DELIVERED,
                         deliveredAtMs = now,
                         replyTo = payload.replyTo,
+                        linkUrl = payload.link?.url,
+                        linkTitle = payload.link?.title,
+                        linkDescription = payload.link?.description,
+                        linkImage = payload.link?.image,
                     ),
                 )
             }
+            is Payload.Media -> {
+                setTyping(false)
+                val info = payload.media
+                val size = info.size.toLong()
+                val handled = insertIncoming(
+                    MessageEntity(
+                        id = payload.id,
+                        fromMe = false,
+                        kind = MessageKind.MEDIA,
+                        body = payload.caption.orEmpty(),
+                        sentAtMs = payload.sentAtMs,
+                        sortAtMs = envelope.atMs,
+                        state = MessageState.DELIVERED,
+                        deliveredAtMs = now,
+                        replyTo = payload.replyTo,
+                        mediaKind = if (info.kind == MediaKind.UNKNOWN) MediaType.FILE else info.kind.name,
+                        mediaMime = info.mime,
+                        mediaName = info.name,
+                        mediaSize = size,
+                        mediaWidth = info.width,
+                        mediaHeight = info.height,
+                        mediaDurationMs = info.durationMs,
+                        mediaThumb = info.thumbnail,
+                        mediaWaveform = info.waveform.takeIf { it.isNotEmpty() }?.let { Base64.encodeToString(it, Base64.NO_WRAP) },
+                        blobId = info.blobId,
+                        blobKey = info.key,
+                        transfer = if (autoDownload(info.kind, size)) Transfer.DOWNLOAD else Transfer.ASK,
+                        viewOnce = payload.viewOnce,
+                    ),
+                )
+                if (handled == Handled.NEW_MESSAGE) kickTransfers()
+                return handled
+            }
+            is Payload.Reaction -> dao.setTheirReaction(payload.targetId, payload.emoji)
+            is Payload.Edit -> dao.edit(payload.targetId, fromMe = false, body = payload.body, atMs = payload.editedAtMs)
+            is Payload.Unsend -> {
+                dao.get(payload.targetId)?.takeIf { !it.fromMe }?.let { media.delete(it.mediaFile) }
+                dao.unsend(payload.targetId, fromMe = false)
+            }
+            is Payload.Pin -> dao.setPinned(payload.targetId, if (payload.pinned) payload.atMs else null)
+            is Payload.Opened -> dao.markOpenedByPartner(payload.targetId, payload.atMs)
+            is Payload.CallOffer, is Payload.CallRinging, is Payload.CallAnswer, is Payload.CallCandidates,
+            is Payload.CallMedia, is Payload.CallEnd -> onCallPayload(payload)
             is Payload.Read -> dao.markReadByPartner(payload.ids, payload.readAtMs)
             is Payload.Typing -> setTyping(payload.active)
             is Payload.Status -> {
@@ -762,6 +1160,13 @@ class Messenger(
         return Handled.DONE
     }
 
+    /** Calls are wired up by [CallManager]; until it's set, call signalling is ignored. */
+    var callHandler: (suspend (Payload) -> Unit)? = null
+
+    private suspend fun onCallPayload(payload: Payload) {
+        callHandler?.invoke(payload)
+    }
+
     private suspend fun insertIncoming(message: MessageEntity): Handled =
         if (dao.insert(message) != -1L) Handled.NEW_MESSAGE else Handled.DONE
 
@@ -784,7 +1189,10 @@ class Messenger(
     // ---- internals: housekeeping -------------------------------------------------------
 
     private suspend fun wipeConversation() {
+        VoicePlayer.stop()
         dao.deleteAll()
+        outbox.clear()
+        media.clear()
         crypto.forgetSessions(null)
         settings.clearPartner()
         _partner.value = null
@@ -850,6 +1258,7 @@ class Messenger(
         const val STATUS_MIN_GAP_MS = 60_000L
         const val STATUS_REFRESH_MS = 10 * 60_000L
         const val CRITICAL_BATTERY = 5
+        const val AUTO_DOWNLOAD_BYTES = 16L * 1024 * 1024
         const val LOW_BATTERY_RESET = 15
     }
 }

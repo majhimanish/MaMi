@@ -227,6 +227,7 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.work.runtime)
+    implementation(libs.coil.compose)
 
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)

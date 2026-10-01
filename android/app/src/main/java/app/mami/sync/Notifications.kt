@@ -15,6 +15,7 @@ import androidx.core.app.Person
 import androidx.core.content.ContextCompat
 import app.mami.MainActivity
 import app.mami.R
+import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
 
@@ -95,7 +96,25 @@ class Notifications(private val context: Context) {
         fun preview(message: MessageEntity, partnerName: String): String = when (message.kind) {
             MessageKind.NUDGE -> nudgeText(message.body)
             MessageKind.ALERT -> "🔋 ${partnerName.ifBlank { "Your partner" }}'s phone is at ${message.batteryPercent ?: "a few"}% and may switch off soon"
+            MessageKind.MEDIA -> mediaLabel(message) + message.body.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
             else -> message.body
+        }
+
+        /** "📷 Photo", "🎤 Voice message (0:12)" and so on. */
+        fun mediaLabel(message: MessageEntity): String = when (message.mediaKind) {
+            MediaType.PHOTO -> if (message.viewOnce) "📷 Photo · view once" else "📷 Photo"
+            MediaType.VIDEO -> if (message.viewOnce) "🎥 Video · view once" else "🎥 Video"
+            MediaType.VOICE -> "🎤 Voice message" + (message.mediaDurationMs?.let { " (${duration(it)})" }.orEmpty())
+            else -> "📄 " + (message.mediaName ?: "File")
+        }
+
+        fun duration(ms: Long): String {
+            val seconds = (ms + 500) / 1000
+            return if (seconds >= 3600) {
+                "%d:%02d:%02d".format(seconds / 3600, (seconds / 60) % 60, seconds % 60)
+            } else {
+                "%d:%02d".format(seconds / 60, seconds % 60)
+            }
         }
 
         fun nudgeText(kind: String): String = when (kind) {

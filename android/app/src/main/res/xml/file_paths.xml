@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What MaMi's FileProvider may hand to other apps: attachments and camera captures. -->
+<paths>
+    <files-path name="media" path="media/" />
+    <cache-path name="capture" path="capture/" />
+</paths>

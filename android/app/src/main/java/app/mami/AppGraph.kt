@@ -9,6 +9,8 @@ import app.mami.data.Settings
 import app.mami.data.db.MamiDatabase
 import app.mami.demo.DemoBackend
 import app.mami.device.DeviceStatusCollector
+import app.mami.media.LinkPreviewer
+import app.mami.media.MediaLibrary
 import app.mami.sync.Messenger
 import app.mami.sync.Notifications
 import java.io.File
@@ -29,8 +31,11 @@ class AppGraph(context: Context) {
     val api = Api(settings, http)
     val realtime = Realtime(settings, http, scope)
     val crypto = CryptoStore(File(context.filesDir, "crypto"), settings)
-    val database = Room.databaseBuilder(context, MamiDatabase::class.java, "mami.db").build()
+    val database = Room.databaseBuilder(context, MamiDatabase::class.java, "mami.db")
+        .addMigrations(MamiDatabase.MIGRATION_1_2)
+        .build()
     val notifications = Notifications(context)
+    val media = MediaLibrary(context)
     val messenger = Messenger(
         context = context,
         settings = settings,
@@ -40,9 +45,11 @@ class AppGraph(context: Context) {
         db = database,
         collector = DeviceStatusCollector(context),
         notifications = notifications,
+        media = media,
+        linkPreviewer = LinkPreviewer(http),
         scope = scope,
     )
 
     /** Simulated partner for the debug playground. */
-    val demo: DemoBackend by lazy { DemoBackend(scope) }
+    val demo: DemoBackend by lazy { DemoBackend(scope, media) }
 }

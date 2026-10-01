@@ -16,7 +16,7 @@ enum class Stage { SignIn, Profile, Sharing, Pair, Chat }
 
 enum class SignInStep { Welcome, Email, Code }
 
-enum class Overlay { None, Settings, Safety }
+enum class Overlay { None, Settings, Safety, Media, Starred }
 
 /** What every screen needs: the backend, navigation state and a way to run actions. */
 interface UiController {
@@ -30,6 +30,9 @@ interface UiController {
     var signInEmail: String
     var overlay: Overlay
     var partnerSheetOpen: Boolean
+
+    /** A message the chat should scroll to and flash (from search, media, starred). */
+    var jumpTo: String?
     val appearance: Appearance
 
     fun changeAppearance(appearance: Appearance)
@@ -52,6 +55,7 @@ abstract class BaseUiController(protected val scope: CoroutineScope) : UiControl
     override var signInEmail by mutableStateOf("")
     override var overlay by mutableStateOf(Overlay.None)
     override var partnerSheetOpen by mutableStateOf(false)
+    override var jumpTo by mutableStateOf<String?>(null)
 
     override fun run(action: suspend () -> Unit, onSuccess: () -> Unit) {
         scope.launch {
@@ -91,9 +95,12 @@ fun describe(e: Exception): String = when (e) {
         "name_too_long" -> "Please use a shorter name (40 characters at most)."
         "bad_server_address" -> "The server address isn't valid."
         "unauthorized" -> "Please sign in again."
+        "too_large" -> "That's too big to send (100 MB at most)."
+        "quota_full" -> "Too much is waiting for your partner to download. Try again once they've opened the chat."
         else -> "Something went wrong (${e.code}). Please try again."
     }
     is NoSessionException -> "The secure connection with your partner isn't ready yet."
+    is app.mami.media.MediaException -> e.message ?: "That file couldn't be sent."
     is IOException -> "Can't reach MaMi. Check your internet connection (or use the 🐞 demo mode)."
     else -> e.message ?: "Something went wrong."
 }

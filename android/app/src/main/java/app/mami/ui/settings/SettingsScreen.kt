@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.HeartBroken
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wallpaper
@@ -110,6 +111,7 @@ fun SettingsScreen(ui: UiController) {
     val partner by backend.partner.collectAsStateWithLifecycle()
     var lowBattery by remember(backend) { mutableStateOf(backend.lowBatteryAlerts) }
     var hideText by remember(backend) { mutableStateOf(backend.hideNotificationText) }
+    var previews by remember(backend) { mutableStateOf(backend.linkPreviews) }
     var pickedPreset by remember { mutableStateOf<Preset?>(null) }
     var editingName by rememberSaveable { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
@@ -249,6 +251,10 @@ fun SettingsScreen(ui: UiController) {
                 ToggleRow(Icons.Filled.VisibilityOff, "Hide message text", "Notifications say \"New message\" instead", hideText) {
                     hideText = it
                     backend.hideNotificationText = it
+                }
+                ToggleRow(Icons.Filled.Link, "Link previews", "Your phone fetches a title and picture before sending a link. The MaMi server never sees your links.", previews) {
+                    previews = it
+                    backend.linkPreviews = it
                 }
                 NavRow(Icons.Filled.Lock, "Verify ${partnerName}'s security code", "Compare a code to be sure no one is in between") {
                     ui.overlay = Overlay.Safety

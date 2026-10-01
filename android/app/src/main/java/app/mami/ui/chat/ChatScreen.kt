@@ -1,5 +1,14 @@
 package app.mami.ui.chat
 
+import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.pm.PackageManager
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -7,10 +16,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,21 +28,14 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Battery2Bar
 import androidx.compose.material.icons.filled.Battery4Bar
@@ -46,12 +45,16 @@ import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DoNotDisturbOn
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PermMedia
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
@@ -64,11 +67,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -79,31 +82,31 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mami.core.DeviceStatus
 import app.mami.core.NetworkKind
-import app.mami.core.NudgeKind
 import app.mami.core.RingerMode
 import app.mami.data.ConnectionState
 import app.mami.data.PresenceDto
+import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
+import app.mami.ui.Files
 import app.mami.ui.Format
 import app.mami.ui.Overlay
 import app.mami.ui.UiController
@@ -123,6 +126,8 @@ private const val GROUP_GAP_MS = 5 * 60_000L
 @Composable
 fun ChatScreen(ui: UiController) {
     val backend = ui.backend
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val messages by backend.messages.collectAsStateWithLifecycle(initialValue = emptyList())
     val partner by backend.partner.collectAsStateWithLifecycle()
     val presence by backend.presence.collectAsStateWithLifecycle()
@@ -132,6 +137,7 @@ fun ChatScreen(ui: UiController) {
     val keyChanged by backend.partnerKeyChanged.collectAsStateWithLifecycle()
     val myShares by backend.shares.collectAsStateWithLifecycle()
     val connection by backend.connection.collectAsStateWithLifecycle()
+    val progress by backend.transferProgress.collectAsStateWithLifecycle()
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             delay(30_000)
@@ -142,8 +148,14 @@ fun ChatScreen(ui: UiController) {
     val status = visiblePartnerStatus(statusPair?.first, myShares)
     val hints = partnerHints(status, presence, name, now)
 
+    val composer = remember { ComposerState() }
     var details by remember { mutableStateOf<MessageEntity?>(null) }
+    var actionsFor by remember { mutableStateOf<MessageEntity?>(null) }
+    var viewer by remember { mutableStateOf<String?>(null) }
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     var burst by remember { mutableIntStateOf(0) }
+    val snackbar = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
 
     // While the chat is on screen, everything that arrives counts as read.
@@ -174,66 +186,140 @@ fun ChatScreen(ui: UiController) {
             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
         }
     }
+    LaunchedEffect(ui.error) {
+        val error = ui.error ?: return@LaunchedEffect
+        snackbar.showSnackbar(error)
+        ui.clearError()
+    }
+    BackHandler(enabled = searching) {
+        searching = false
+        query = ""
+    }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            ChatTopBar(
-                name = name,
-                status = status,
-                presence = presence,
-                typing = typing,
-                hint = hints.firstOrNull(),
-                now = now,
-                onOpenPartner = { ui.partnerSheetOpen = true },
-                onSettings = { ui.overlay = Overlay.Settings },
-            )
-        },
-        bottomBar = {
-            Composer(
-                onChanged = backend::onComposerChanged,
-                onSend = { backend.sendText(it) },
-                onNudge = { kind ->
-                    backend.sendNudge(kind)
-                    burst++
-                },
-            )
-        },
-    ) { padding ->
-        Box(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .heartWallpaper(MaterialTheme.colorScheme.primary.copy(alpha = if (Mami.colors.isDark) 0.06f else 0.045f), Mami.colors.wallpaper),
+    val storagePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        Toast.makeText(context, if (granted) "Now tap Save again" else "MaMi needs storage access to save on this Android version.", Toast.LENGTH_SHORT).show()
+    }
+    fun save(message: MessageEntity) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
         ) {
-            Column(Modifier.fillMaxSize()) {
-                if (connection != ConnectionState.Connected) {
-                    Banner(Icons.Filled.CloudOff, if (connection == ConnectionState.Connecting) "Connecting…" else "Offline. Messages wait on your phone and go out by themselves.")
+            storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            return
+        }
+        scope.launch {
+            val saved = backend.saveToDevice(message)
+            Toast.makeText(context, if (saved) "Saved to your phone" else "Couldn't save it", Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun open(message: MessageEntity) {
+        val file = backend.fileFor(message)
+        when {
+            message.unsent -> Unit
+            message.mediaKind == MediaType.PHOTO || message.mediaKind == MediaType.VIDEO -> when {
+                message.viewOnce && (message.fromMe || message.openedAtMs != null) -> Unit
+                file != null -> viewer = message.id
+                else -> backend.retryTransfer(message.id)
+            }
+            message.mediaKind == MediaType.FILE -> if (file != null) Files.open(context, file, message.mediaMime) else backend.retryTransfer(message.id)
+        }
+    }
+    val bubbleActions = remember(backend) {
+        BubbleActions(
+            onOpen = { open(it) },
+            onLongPress = {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                actionsFor = it
+            },
+            onReply = { composer.reply(it) },
+            onJumpTo = { ui.jumpTo = it },
+            onRetry = backend::retryTransfer,
+            onOpenLink = { Files.openUrl(context, it) },
+        )
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            snackbarHost = { SnackbarHost(snackbar) },
+            topBar = {
+                AnimatedContent(searching, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "topbar") { isSearching ->
+                    if (isSearching) {
+                        SearchTopBar(query, onQuery = { query = it }, onClose = {
+                            searching = false
+                            query = ""
+                        })
+                    } else {
+                        ChatTopBar(
+                            name = name,
+                            status = status,
+                            presence = presence,
+                            typing = typing,
+                            hint = hints.firstOrNull(),
+                            now = now,
+                            onOpenPartner = { ui.partnerSheetOpen = true },
+                            onSearch = { searching = true },
+                            onMedia = { ui.overlay = Overlay.Media },
+                            onStarred = { ui.overlay = Overlay.Starred },
+                            onSettings = { ui.overlay = Overlay.Settings },
+                        )
+                    }
                 }
-                if (!secure) {
-                    Banner(null, "Setting up end-to-end encryption with $name's phone. Messages go out as soon as it's ready.", progress = true)
+            },
+            bottomBar = {
+                if (!searching) {
+                    Composer(ui, composer, name, onNudge = { kind ->
+                        backend.sendNudge(kind)
+                        burst++
+                    })
                 }
-                if (keyChanged) {
-                    Banner(
-                        Icons.Filled.Warning,
-                        "$name's security code changed, probably a new phone. Compare codes to be sure it's really them.",
-                        actions = {
-                            TextButton(onClick = backend::dismissKeyChanged) { Text("Dismiss") }
-                            TextButton(onClick = { ui.overlay = Overlay.Safety }) { Text("Compare") }
-                        },
+            },
+        ) { padding ->
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .heartWallpaper(MaterialTheme.colorScheme.primary.copy(alpha = if (Mami.colors.isDark) 0.06f else 0.045f), Mami.colors.wallpaper),
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    if (connection != ConnectionState.Connected) {
+                        Banner(Icons.Filled.CloudOff, if (connection == ConnectionState.Connecting) "Connecting…" else "Offline. Messages wait on your phone and go out by themselves.")
+                    }
+                    if (!secure) {
+                        Banner(null, "Setting up end-to-end encryption with $name's phone. Messages go out as soon as it's ready.", progress = true)
+                    }
+                    if (keyChanged) {
+                        Banner(
+                            Icons.Filled.Warning,
+                            "$name's security code changed, probably a new phone. Compare codes to be sure it's really them.",
+                            actions = {
+                                TextButton(onClick = backend::dismissKeyChanged) { Text("Dismiss") }
+                                TextButton(onClick = { ui.overlay = Overlay.Safety }) { Text("Compare") }
+                            },
+                        )
+                    }
+                    PinnedBar(messages, name) { ui.jumpTo = it }
+                    Conversation(
+                        ui = ui,
+                        messages = messages,
+                        partnerName = name,
+                        typing = typing,
+                        now = now,
+                        progress = progress,
+                        actions = bubbleActions,
+                        onDetails = { details = it },
+                        modifier = Modifier.weight(1f),
                     )
                 }
-                Conversation(
-                    messages = messages,
-                    partnerName = name,
-                    typing = typing,
-                    now = now,
-                    onDetails = { details = it },
-                    modifier = Modifier.weight(1f),
-                )
+                HeartBurst(burst)
+                if (searching) {
+                    SearchResults(backend, query, name, now, onOpen = { message ->
+                        searching = false
+                        query = ""
+                        ui.jumpTo = message.id
+                    })
+                }
             }
-            HeartBurst(burst)
         }
     }
 
@@ -256,6 +342,48 @@ fun ChatScreen(ui: UiController) {
         )
     }
     details?.let { message -> MessageDetailsSheet(message, name) { details = null } }
+    actionsFor?.let { message ->
+        val file = backend.fileFor(message)
+        val shareable = file != null && !message.viewOnce
+        MessageActionsSheet(
+            message = message,
+            partnerName = name,
+            menu = MessageMenu(
+                onReact = { backend.react(message.id, it) },
+                onReply = { composer.reply(message) },
+                onCopy = if (message.body.isNotBlank() && message.kind != MessageKind.NUDGE && message.kind != MessageKind.ALERT) {
+                    {
+                        context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Message", message.body))
+                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    null
+                },
+                onEdit = if (canEdit(message)) { { composer.edit(message) } } else null,
+                onPin = { backend.setPinned(message.id, it) },
+                onStar = { backend.setStarred(message.id, it) },
+                onInfo = { details = message },
+                onSave = if (shareable) { { save(message) } } else null,
+                onShare = if (shareable && file != null) { { Files.share(context, file, message.mediaMime) } } else null,
+                onUnsend = if (message.fromMe && !message.unsent) { { backend.unsend(message.id) } } else null,
+                onDelete = { backend.deleteForMe(message.id) },
+            ),
+            onDismiss = { actionsFor = null },
+        )
+    }
+    viewer?.let { start ->
+        MediaViewer(
+            backend = backend,
+            items = remember(messages, start) { viewable(messages, backend, start) },
+            startId = start,
+            partnerName = name,
+            onShowInChat = {
+                viewer = null
+                ui.jumpTo = it
+            },
+            onDismiss = { viewer = null },
+        )
+    }
 }
 
 @Composable
@@ -267,8 +395,12 @@ private fun ChatTopBar(
     hint: Hint?,
     now: Long,
     onOpenPartner: () -> Unit,
+    onSearch: () -> Unit,
+    onMedia: () -> Unit,
+    onStarred: () -> Unit,
     onSettings: () -> Unit,
 ) {
+    var menu by remember { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
         Column(Modifier.statusBarsPadding()) {
             Row(
@@ -312,9 +444,75 @@ private fun ChatTopBar(
                         }
                     }
                 }
-                IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
+                IconButton(onClick = onSearch) { Icon(Icons.Filled.Search, contentDescription = "Search messages") }
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Media, links and files") },
+                            leadingIcon = { Icon(Icons.Filled.PermMedia, contentDescription = null) },
+                            onClick = {
+                                menu = false
+                                onMedia()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Starred messages") },
+                            leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) },
+                            onClick = {
+                                menu = false
+                                onStarred()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                            onClick = {
+                                menu = false
+                                onSettings()
+                            },
+                        )
+                    }
+                }
             }
             StatusStrip(status, now, onOpenPartner)
+        }
+    }
+}
+
+/** The newest pinned message, under the top bar. With several, a tap cycles through them. */
+@Composable
+private fun PinnedBar(messages: List<MessageEntity>, partnerName: String, onJump: (String) -> Unit) {
+    val pinned = remember(messages) { messages.filter { it.pinnedAtMs != null && !it.unsent }.sortedByDescending { it.pinnedAtMs } }
+    var index by remember { mutableIntStateOf(0) }
+    AnimatedVisibility(visible = pinned.isNotEmpty()) {
+        val shown = pinned.getOrNull(index % pinned.size.coerceAtLeast(1)) ?: return@AnimatedVisibility
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shadowElevation = 1.dp) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        onJump(shown.id)
+                        if (pinned.size > 1) index = (index + 1) % pinned.size
+                    }
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.PushPin, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(
+                        if (pinned.size > 1) "Pinned · ${index % pinned.size + 1} of ${pinned.size}" else "Pinned",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        (if (shown.fromMe) "You: " else "$partnerName: ") + snippet(shown, partnerName),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
@@ -410,19 +608,38 @@ private fun Banner(
 
 @Composable
 private fun Conversation(
+    ui: UiController,
     messages: List<MessageEntity>,
     partnerName: String,
     typing: Boolean,
     now: Long,
+    progress: Map<String, Float>,
+    actions: BubbleActions,
     onDetails: (MessageEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val backend = ui.backend
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val newestFirst = remember(messages) { messages.asReversed() }
-    val newestMine = remember(messages) { newestFirst.firstOrNull { it.fromMe && it.kind == MessageKind.TEXT }?.id }
+    val byId = remember(messages) { messages.associateBy { it.id } }
+    val newestMine = remember(messages) {
+        newestFirst.firstOrNull { it.fromMe && !it.unsent && (it.kind == MessageKind.TEXT || it.kind == MessageKind.MEDIA) }?.id
+    }
+    var highlighted by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(messages.size, typing) {
         if (listState.firstVisibleItemIndex <= 2) listState.animateScrollToItem(0)
+    }
+    // Scroll to a message from search, a quote, the pinned bar or "show in chat", and flash it.
+    LaunchedEffect(ui.jumpTo, newestFirst) {
+        val target = ui.jumpTo ?: return@LaunchedEffect
+        val index = newestFirst.indexOfFirst { it.id == target }
+        ui.jumpTo = null
+        if (index < 0) return@LaunchedEffect
+        listState.animateScrollToItem(index + if (typing) 1 else 0, scrollOffset = -200)
+        highlighted = target
+        delay(1600)
+        if (highlighted == target) highlighted = null
     }
     val showJump by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
@@ -438,7 +655,7 @@ private fun Conversation(
                 Text("Say hi to $partnerName", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Everything here is end-to-end encrypted.\nTap ❤️ to send a little \"thinking of you\".",
+                    "Everything here is end-to-end encrypted.\nTap ❤️ to send a little \"thinking of you\", or hold the mic for a voice message.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -464,9 +681,19 @@ private fun Conversation(
                         DaySeparator(Format.day(message.sortAtMs, now))
                     }
                     when (message.kind) {
-                        MessageKind.TEXT -> TextBubble(message, first, last) { onDetails(message) }
                         MessageKind.NUDGE -> NudgeSticker(message, partnerName) { onDetails(message) }
-                        else -> BatteryAlertCard(message, partnerName) { onDetails(message) }
+                        MessageKind.ALERT -> BatteryAlertCard(message, partnerName) { onDetails(message) }
+                        else -> MessageRow(
+                            message = message,
+                            first = first,
+                            last = last,
+                            partnerName = partnerName,
+                            quoted = message.replyTo?.let(byId::get),
+                            file = if (message.isMedia) backend.fileFor(message) else null,
+                            progress = progress[message.id],
+                            highlighted = highlighted == message.id,
+                            actions = actions,
+                        )
                     }
                     if (message.id == newestMine) ReceiptLine(message, partnerName)
                 }
@@ -486,84 +713,6 @@ private fun Conversation(
 }
 
 private fun sameRun(a: MessageEntity, b: MessageEntity) =
-    a.fromMe == b.fromMe && a.kind == MessageKind.TEXT && b.kind == MessageKind.TEXT && kotlin.math.abs(b.sortAtMs - a.sortAtMs) < GROUP_GAP_MS
+    a.fromMe == b.fromMe && a.kind in grouped && b.kind in grouped && kotlin.math.abs(b.sortAtMs - a.sortAtMs) < GROUP_GAP_MS
 
-private val nudges = listOf(
-    NudgeKind.THINKING_OF_YOU to "💗  Thinking of you",
-    NudgeKind.HUG to "🤗  Hug",
-    NudgeKind.KISS to "😘  Kiss",
-    NudgeKind.MISS_YOU to "🥺  Miss you",
-)
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun Composer(onChanged: (String) -> Unit, onSend: (String) -> Unit, onNudge: (NudgeKind) -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
-    var menu by remember { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            Box {
-                Box(
-                    Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .combinedClickable(
-                            onClick = { onNudge(NudgeKind.THINKING_OF_YOU) },
-                            onLongClick = { menu = true },
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Filled.Favorite, contentDescription = "Send a heart (hold for more)", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    nudges.forEach { (kind, label) ->
-                        DropdownMenuItem(text = { Text(label) }, onClick = {
-                            menu = false
-                            onNudge(kind)
-                        })
-                    }
-                }
-            }
-            TextField(
-                value = text,
-                onValueChange = {
-                    text = it
-                    onChanged(it)
-                },
-                placeholder = { Text("Say something sweet…") },
-                maxLines = 5,
-                shape = RoundedCornerShape(26.dp),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                ),
-                modifier = Modifier.weight(1f),
-            )
-            AnimatedVisibility(visible = text.isNotBlank(), enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
-                Box(
-                    Modifier
-                        .padding(start = 6.dp)
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(Mami.colors.brush)
-                        .clickable {
-                            onSend(text)
-                            text = ""
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White)
-                }
-            }
-        }
-    }
-}
+private val grouped = setOf(MessageKind.TEXT, MessageKind.MEDIA)

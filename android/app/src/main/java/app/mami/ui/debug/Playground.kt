@@ -57,6 +57,7 @@ import app.mami.core.RingerMode
 import app.mami.data.ConnectionState
 import app.mami.ui.AppController
 import app.mami.ui.Destination
+import app.mami.ui.Overlay
 import app.mami.ui.chat.localTime
 import app.mami.ui.chat.partnerLocalHourMinute
 import app.mami.ui.theme.DarkMode
@@ -217,6 +218,42 @@ fun Playground(controller: AppController, onDismiss: () -> Unit) {
                             demo.setOnline(connection != ConnectionState.Connected)
                         }
                         Action("🧹 Clear chat") { demo.clearChat() }
+                    }
+                }
+
+                Section("Maya shares something") {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Action("🌅 Photo") { demo.receivePhoto() }
+                        Action("🙈 View-once photo") { demo.receivePhoto(viewOnce = true) }
+                        Action("🎤 Voice message") { demo.receiveVoice() }
+                        Action("🎥 Video") { demo.receiveVideo() }
+                        Action("📄 PDF") { demo.receiveDocument() }
+                        Action("🔗 Link") { demo.receiveLink() }
+                    }
+                }
+
+                Section("Maya does something to a message") {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Action("❤️ Reacts to mine") { demo.partnerReacts() }
+                        Action("😂 Laughs at mine") { demo.partnerReacts(emoji = "😂") }
+                        Action("✏️ Edits hers") { demo.partnerEdits() }
+                        Action("💨 Unsends hers") { demo.partnerUnsends() }
+                        Action("📌 Pins hers") { demo.partnerPins() }
+                    }
+                }
+
+                Section("Open a screen") {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Action("🖼️ Media, links & files") {
+                            controller.goTo(Destination.Chat)
+                            controller.overlay = Overlay.Media
+                            onDismiss()
+                        }
+                        Action("⭐ Starred") {
+                            controller.goTo(Destination.Chat)
+                            controller.overlay = Overlay.Starred
+                            onDismiss()
+                        }
                     }
                 }
             }

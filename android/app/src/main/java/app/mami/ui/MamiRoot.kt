@@ -19,12 +19,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.mami.BuildConfig
 import app.mami.ui.chat.ChatScreen
+import app.mami.ui.chat.MediaViewer
+import app.mami.ui.chat.StarredScreen
+import app.mami.ui.chat.viewable
+import app.mami.ui.media.SharedMediaScreen
 import app.mami.ui.debug.Playground
 import app.mami.ui.debug.PlaygroundButton
 import app.mami.ui.onboarding.ProfileScreen
@@ -88,6 +95,15 @@ private fun PairedScreens(ui: UiController) {
     BackHandler(enabled = ui.overlay != Overlay.None) {
         ui.overlay = if (ui.overlay == Overlay.Safety) Overlay.Settings else Overlay.None
     }
+    val partner by ui.backend.partner.collectAsStateWithLifecycle()
+    val messages by ui.backend.messages.collectAsStateWithLifecycle(initialValue = emptyList())
+    val partnerName = partner?.displayName?.ifBlank { null } ?: partner?.email?.substringBefore('@') ?: "Your partner"
+    var viewing by remember { mutableStateOf<String?>(null) }
+    val showInChat: (String) -> Unit = { id ->
+        viewing = null
+        ui.overlay = Overlay.None
+        ui.jumpTo = id
+    }
     AnimatedContent(
         targetState = ui.overlay,
         transitionSpec = {
@@ -101,7 +117,25 @@ private fun PairedScreens(ui: UiController) {
             Overlay.None -> ChatScreen(ui)
             Overlay.Settings -> SettingsScreen(ui)
             Overlay.Safety -> SafetyScreen(ui)
+            Overlay.Media -> SharedMediaScreen(
+                ui,
+                partnerName,
+                onBack = { ui.overlay = Overlay.None },
+                onOpen = { viewing = it.id },
+                onShowInChat = showInChat,
+            )
+            Overlay.Starred -> StarredScreen(ui, partnerName, onBack = { ui.overlay = Overlay.None }, onShowInChat = showInChat)
         }
+    }
+    viewing?.let { start ->
+        MediaViewer(
+            backend = ui.backend,
+            items = remember(messages, start) { viewable(messages, ui.backend, start) },
+            startId = start,
+            partnerName = partnerName,
+            onShowInChat = showInChat,
+            onDismiss = { viewing = null },
+        )
     }
 }
 

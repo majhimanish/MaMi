@@ -78,6 +78,7 @@ jobs:
           name: mami-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+      # Runs every unit test (database migration, screenshots of every screen).
       - name: Render screenshots of every screen
         id: screenshots
         continue-on-error: true
@@ -106,3 +107,8 @@ jobs:
         with:
           name: screenshot-test-report
           path: android/app/build/reports/tests
+      - name: Unit tests must pass
+        if: steps.screenshots.outcome == 'failure'
+        run: |
+          echo "::error::Android unit or screenshot tests failed; see the screenshot-test-report artifact."
+          exit 1

@@ -86,6 +86,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("low_battery_alerts", true)
         set(value) = prefs.edit { putBoolean("low_battery_alerts", value) }
 
+    /** Make link previews on this phone before sending a link. */
+    var linkPreviews: Boolean
+        get() = prefs.getBoolean("link_previews", true)
+        set(value) = prefs.edit { putBoolean("link_previews", value) }
+
     var lowBatteryAlertSent: Boolean
         get() = prefs.getBoolean("low_battery_alert_sent", false)
         set(value) = prefs.edit { putBoolean("low_battery_alert_sent", value) }
