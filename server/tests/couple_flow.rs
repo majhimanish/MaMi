@@ -258,6 +258,7 @@ fn text(id: &str, body: &str) -> Payload {
         sent_at_ms: 1,
         reply_to: None,
         link: None,
+        deliver_at_ms: None,
     }
 }
 
@@ -1158,6 +1159,10 @@ async fn upgrading_the_queue_keeps_counting_sequence_numbers() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0003_live_location.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let seq: i64 = sqlx::query_scalar(
         "INSERT INTO queue (recipient_id, sender_id, kind, client_id, created_at)
          VALUES ('a', 'b', 'call', 'c1', 0) RETURNING seq",
@@ -1171,4 +1176,44 @@ async fn upgrading_the_queue_keeps_counting_sequence_numbers() {
         .await
         .unwrap();
     assert_eq!(kept, 1);
+}
+
+#[tokio::test]
+async fn only_the_newest_live_location_waits() {
+    let server = Server::start().await;
+    let mut maya = server.sign_in("maya@example.com").await;
+    let mut arjun = server.sign_in("arjun@example.com").await;
+    pair(&maya, &arjun).await;
+    start_session(&mut maya, &mut arjun).await;
+
+    for (i, lat) in [27.70, 27.71, 27.72].iter().enumerate() {
+        let update = arjun.seal(
+            &format!("loc-{i}"),
+            SendKind::Location,
+            Payload::Location {
+                lat: *lat,
+                lng: 85.32,
+                accuracy_m: Some(10.0),
+                speed_mps: None,
+                at_ms: i as i64,
+                until_ms: 1_000,
+            },
+            false,
+        );
+        assert_eq!(arjun.post_envelope(&update).await.status(), StatusCode::OK);
+    }
+    let waiting: Vec<_> = maya
+        .pending()
+        .await
+        .into_iter()
+        .filter(|e| e.kind == EnvelopeKind::Location)
+        .collect();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].id, "loc-2");
+    // Olm can skip the replaced messages and still open the newest one.
+    let Payload::Location { lat, .. } = maya.open(&waiting[0]) else {
+        panic!()
+    };
+    assert_eq!(lat, 27.72);
+    assert!(server.pushes.lock().unwrap().is_empty());
 }

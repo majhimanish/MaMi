@@ -589,11 +589,18 @@ pub(crate) async fn deliver(
             }
             envelope
         }
-        SendKind::Status => {
-            let envelope = state
-                .store
-                .replace_status(sender, &partner, &req.id, req.message_type, &req.body)
-                .await?;
+        SendKind::Status | SendKind::Location => {
+            let envelope = if req.kind == SendKind::Status {
+                state
+                    .store
+                    .replace_status(sender, &partner, &req.id, req.message_type, &req.body)
+                    .await?
+            } else {
+                state
+                    .store
+                    .replace_location(sender, &partner, &req.id, req.message_type, &req.body)
+                    .await?
+            };
             state
                 .hub
                 .send(&partner, &ServerFrame::Envelope(envelope.clone()));

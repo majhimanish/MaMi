@@ -12,6 +12,8 @@ const LOW_BATTERY: i32 = 15;
 const DIED_AFTER_MS: i64 = 10 * 60 * 1000;
 const NIGHT_STARTS: i32 = 23;
 const NIGHT_ENDS: i32 = 7;
+/// "Woke up at 7:12" is news for a few hours.
+const WOKE_RECENT_MS: i64 = 4 * 60 * 60 * 1000;
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct Presence {
@@ -24,11 +26,20 @@ pub struct Presence {
 #[derive(uniffi::Enum, Clone, Debug, PartialEq)]
 pub enum Insight {
     OnlineNow,
-    /// They set a status like "🚗 Driving".
+    /// They paused sharing; nothing else can be said about their phone.
+    SharingPaused {
+        until_ms: Option<i64>,
+    },
+    /// They picked their phone up this morning.
+    WokeUp {
+        at_ms: i64,
+    },
+    /// They set a status like "🚗 Driving" (or their phone noticed it: `automatic`).
     Busy {
         emoji: String,
         label: String,
         until_ms: Option<i64>,
+        automatic: bool,
     },
     /// The battery was almost empty and the phone has gone quiet.
     PhoneMayHaveDied {
@@ -76,14 +87,39 @@ pub fn partner_insights(
         return out;
     };
 
-    if let Some(quick) = &status.quick_status
-        && quick.until_ms.is_none_or(|until| until > now_ms)
+    // While paused there's nothing to go on, and silence must not look like a dead phone.
+    if let Some(until) = status.paused_until_ms
+        && until > now_ms
     {
+        out.push(Insight::SharingPaused {
+            until_ms: Some(until),
+        });
+        push_last_seen(&mut out, &presence);
+        return out;
+    }
+
+    let current = |q: &&crate::payload::QuickStatus| q.until_ms.is_none_or(|until| until > now_ms);
+    if let Some(quick) = status.quick_status.as_ref().filter(current) {
         out.push(Insight::Busy {
             emoji: quick.emoji.clone(),
             label: quick.label.clone(),
             until_ms: quick.until_ms,
+            automatic: false,
         });
+    } else if let Some(auto) = status.auto_status.as_ref().filter(current) {
+        out.push(Insight::Busy {
+            emoji: auto.emoji.clone(),
+            label: auto.label.clone(),
+            until_ms: auto.until_ms,
+            automatic: true,
+        });
+    }
+
+    let woke_recently = status
+        .woke_at_ms
+        .filter(|at| now_ms - at < WOKE_RECENT_MS && *at <= now_ms);
+    if let Some(at_ms) = woke_recently {
+        out.push(Insight::WokeUp { at_ms });
     }
 
     if let Some(battery) = status.battery_percent {
@@ -111,7 +147,10 @@ pub fn partner_insights(
 
     if let Some(offset) = status.utc_offset_minutes {
         let (hour, minute) = local_time(now_ms, offset);
-        if !presence.online && !(NIGHT_ENDS..NIGHT_STARTS).contains(&hour) {
+        if !presence.online
+            && woke_recently.is_none()
+            && !(NIGHT_ENDS..NIGHT_STARTS).contains(&hour)
+        {
             out.push(Insight::ProbablyAsleep {
                 local_hour: hour,
                 local_minute: minute,
@@ -169,6 +208,93 @@ mod tests {
             online: false,
             last_seen_ms: Some(ms),
         }
+    }
+
+    #[test]
+    fn paused_sharing_is_said_honestly_and_hides_guesses() {
+        let status = DeviceStatus {
+            captured_at_ms: NOON_UTC - 40 * MIN,
+            battery_percent: Some(3),
+            paused_until_ms: Some(NOON_UTC + 60 * MIN),
+            ..Default::default()
+        };
+        let insights = partner_insights(
+            Some(status.clone()),
+            offline_since(NOON_UTC - 45 * MIN),
+            NOON_UTC,
+        );
+        assert_eq!(
+            insights,
+            vec![
+                Insight::SharingPaused {
+                    until_ms: Some(NOON_UTC + 60 * MIN)
+                },
+                Insight::LastSeen {
+                    at_ms: NOON_UTC - 45 * MIN
+                }
+            ]
+        );
+        // Once the pause is over, the usual hints come back.
+        let later = partner_insights(
+            Some(status),
+            offline_since(NOON_UTC - 45 * MIN),
+            NOON_UTC + 61 * MIN,
+        );
+        assert!(matches!(later[0], Insight::PhoneMayHaveDied { .. }));
+    }
+
+    #[test]
+    fn automatic_statuses_and_waking_up() {
+        let driving = crate::payload::QuickStatus {
+            emoji: "🚗".into(),
+            label: "Driving".into(),
+            until_ms: None,
+        };
+        // 06:30 in Kathmandu is still night, but they woke up at 06:20.
+        let morning = NOON_UTC - 11 * 60 * MIN; // 01:00 UTC = 06:45 NPT
+        let status = DeviceStatus {
+            captured_at_ms: morning,
+            utc_offset_minutes: Some(345),
+            auto_status: Some(driving.clone()),
+            woke_at_ms: Some(morning - 25 * MIN),
+            ..Default::default()
+        };
+        let insights =
+            partner_insights(Some(status.clone()), offline_since(morning - MIN), morning);
+        assert_eq!(
+            insights[0],
+            Insight::Busy {
+                emoji: "🚗".into(),
+                label: "Driving".into(),
+                until_ms: None,
+                automatic: true
+            }
+        );
+        assert_eq!(
+            insights[1],
+            Insight::WokeUp {
+                at_ms: morning - 25 * MIN
+            }
+        );
+        assert!(
+            !insights
+                .iter()
+                .any(|i| matches!(i, Insight::ProbablyAsleep { .. }))
+        );
+
+        // A status they set themselves wins over the automatic one.
+        let manual = DeviceStatus {
+            quick_status: Some(crate::payload::QuickStatus {
+                emoji: "💼".into(),
+                label: "At work".into(),
+                until_ms: None,
+            }),
+            ..status
+        };
+        let insights = partner_insights(Some(manual), offline_since(morning - MIN), morning);
+        assert!(
+            matches!(&insights[0], Insight::Busy { automatic: false, label, .. } if label == "At work")
+        );
     }
 
     #[test]
@@ -284,7 +410,8 @@ mod tests {
                 Insight::Busy {
                     emoji: "🚗".into(),
                     label: "Driving".into(),
-                    until_ms: Some(NOON_UTC + MIN)
+                    until_ms: Some(NOON_UTC + MIN),
+                    automatic: false
                 },
                 Insight::Silenced {
                     do_not_disturb: false,

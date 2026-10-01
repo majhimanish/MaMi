@@ -32,6 +32,8 @@ pub enum SendKind {
     /// Call signalling. Kept for a minute at most (a call nobody picks up in
     /// time is over), and with `push` it rings the partner's phone right away.
     Call,
+    /// Live location while sharing it. Only the newest one is kept.
+    Location,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -55,6 +57,7 @@ pub enum EnvelopeKind {
     /// Your message `id` reached your partner's phone at `at_ms`.
     Delivered,
     Call,
+    Location,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

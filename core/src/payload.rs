@@ -30,6 +30,10 @@ pub enum Payload {
         /// server never learns which links the two of you share.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         link: Option<LinkPreview>,
+        /// A scheduled message: it arrives now but only shows (and notifies)
+        /// at this moment, so it's on time even if a phone is offline then.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deliver_at_ms: Option<i64>,
     },
     /// A photo, video, voice note or file. The file itself waits on the
     /// server as an encrypted blob; the key to open it is in here.
@@ -102,6 +106,64 @@ pub enum Payload {
     CallEnd {
         call_id: String,
         reason: CallEndReason,
+    },
+    /// Something the two of you share, like the day you got together. The
+    /// newest change wins on both phones.
+    Together {
+        key: TogetherKey,
+        /// A date ("2024-02-14"), a time in ms, or text, depending on the key.
+        value: Option<String>,
+        updated_at_ms: i64,
+    },
+    /// My answer to the daily question.
+    Answer {
+        day: i64,
+        question_id: String,
+        text: String,
+        answered_at_ms: i64,
+    },
+    /// How I'm feeling.
+    Mood {
+        id: String,
+        mood: String,
+        note: Option<String>,
+        at_ms: i64,
+    },
+    /// A love letter. With `open_at_ms` it stays sealed until then.
+    Letter {
+        id: String,
+        title: String,
+        body: String,
+        /// The paper it's written on, like "cream" or "rose".
+        paper: String,
+        open_at_ms: Option<i64>,
+        sent_at_ms: i64,
+    },
+    /// "Home safe", "Leaving now", "Arrived".
+    CheckIn {
+        id: String,
+        kind: CheckInKind,
+        sent_at_ms: i64,
+    },
+    /// I started sharing my live location until `until_ms`.
+    LiveLocation {
+        id: String,
+        until_ms: i64,
+        sent_at_ms: i64,
+    },
+    /// Where I am now, while sharing live location.
+    Location {
+        lat: f64,
+        lng: f64,
+        accuracy_m: Option<f32>,
+        speed_mps: Option<f32>,
+        at_ms: i64,
+        until_ms: i64,
+    },
+    /// I stopped sharing my live location.
+    LiveLocationEnd {
+        id: String,
+        at_ms: i64,
     },
     /// These messages were shown on the partner's screen.
     Read {
@@ -193,6 +255,29 @@ pub struct IceCandidate {
 
 #[derive(uniffi::Enum, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum TogetherKey {
+    /// The day you got together, "yyyy-mm-dd".
+    Since,
+    /// When you'll next see each other, ms since 1970.
+    NextMeeting,
+    /// What the next meeting is ("Dashain in Pokhara").
+    NextMeetingLabel,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(uniffi::Enum, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckInKind {
+    HomeSafe,
+    Leaving,
+    Arrived,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(uniffi::Enum, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum CallEndReason {
     /// Someone hung up (or cancelled before it was answered).
     Hangup,
@@ -229,6 +314,16 @@ pub struct DeviceStatus {
     pub shares: Vec<ShareKind>,
     /// "android" or "ios".
     pub platform: String,
+    /// Sharing is paused until then: the status says so honestly instead of
+    /// going quiet.
+    #[uniffi(default = None)]
+    pub paused_until_ms: Option<i64>,
+    /// A status the phone set by itself, like "🚗 Driving".
+    #[uniffi(default = None)]
+    pub auto_status: Option<QuickStatus>,
+    /// When the phone was first used this morning.
+    #[uniffi(default = None)]
+    pub woke_at_ms: Option<i64>,
 }
 
 #[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -392,6 +487,7 @@ mod tests {
             sent_at_ms: 5,
             reply_to: None,
             link: None,
+            deliver_at_ms: None,
         };
         let longer = Payload::Text {
             id: "1".into(),
@@ -399,6 +495,7 @@ mod tests {
             sent_at_ms: 5,
             reply_to: None,
             link: None,
+            deliver_at_ms: None,
         };
         let a = seal(&short).unwrap();
         let b = seal(&longer).unwrap();
@@ -492,8 +589,30 @@ mod tests {
                 description: None,
                 image: None,
             }),
+            deliver_at_ms: Some(1_800_000_000_000),
         };
-        for payload in [media, call, text] {
+        let letter = Payload::Letter {
+            id: "l1".into(),
+            title: "For you".into(),
+            body: "Dear Maya,\n…".into(),
+            paper: "rose".into(),
+            open_at_ms: Some(1_800_000_000_000),
+            sent_at_ms: 12,
+        };
+        let location = Payload::Location {
+            lat: 28.2096,
+            lng: 83.9856,
+            accuracy_m: Some(12.5),
+            speed_mps: None,
+            at_ms: 13,
+            until_ms: 14,
+        };
+        let together = Payload::Together {
+            key: TogetherKey::Since,
+            value: Some("2024-02-14".into()),
+            updated_at_ms: 15,
+        };
+        for payload in [media, call, text, letter, location, together] {
             let sealed = seal(&payload).unwrap();
             assert_eq!(open(&sealed).unwrap(), payload);
         }

@@ -616,21 +616,65 @@ impl Store {
         message_type: i32,
         body: &str,
     ) -> Result<Envelope> {
+        self.replace_newest(
+            EnvelopeKind::Status,
+            sender,
+            recipient,
+            id,
+            message_type,
+            body,
+        )
+        .await
+    }
+
+    /// Keeps only the newest live location from `sender` for `recipient`.
+    pub async fn replace_location(
+        &self,
+        sender: &str,
+        recipient: &str,
+        id: &str,
+        message_type: i32,
+        body: &str,
+    ) -> Result<Envelope> {
+        self.replace_newest(
+            EnvelopeKind::Location,
+            sender,
+            recipient,
+            id,
+            message_type,
+            body,
+        )
+        .await
+    }
+
+    async fn replace_newest(
+        &self,
+        kind: EnvelopeKind,
+        sender: &str,
+        recipient: &str,
+        id: &str,
+        message_type: i32,
+        body: &str,
+    ) -> Result<Envelope> {
+        let name = match kind {
+            EnvelopeKind::Location => "location",
+            _ => "status",
+        };
         let now = now_ms();
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
-            "DELETE FROM queue WHERE sender_id = ? AND recipient_id = ? AND kind = 'status'",
-        )
-        .bind(sender)
-        .bind(recipient)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("DELETE FROM queue WHERE sender_id = ? AND recipient_id = ? AND kind = ?")
+            .bind(sender)
+            .bind(recipient)
+            .bind(name)
+            .execute(&mut *tx)
+            .await?;
         let seq: i64 = sqlx::query_scalar(
             "INSERT INTO queue (recipient_id, sender_id, kind, client_id, message_type, body, created_at)
-             VALUES (?, ?, 'status', ?, ?, ?, ?) RETURNING seq",
+             VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING seq",
         )
         .bind(recipient)
         .bind(sender)
+        .bind(name)
         .bind(id)
         .bind(message_type)
         .bind(body)
@@ -638,14 +682,7 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(envelope(
-            seq,
-            id,
-            EnvelopeKind::Status,
-            Some(message_type),
-            Some(body),
-            now,
-        ))
+        Ok(envelope(seq, id, kind, Some(message_type), Some(body), now))
     }
 
     pub async fn pending(
@@ -673,6 +710,7 @@ impl Store {
                     "status" => EnvelopeKind::Status,
                     "delivered" => EnvelopeKind::Delivered,
                     "call" => EnvelopeKind::Call,
+                    "location" => EnvelopeKind::Location,
                     _ => EnvelopeKind::Message,
                 };
                 Envelope {

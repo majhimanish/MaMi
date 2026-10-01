@@ -365,6 +365,7 @@ mod tests {
             sent_at_ms: 1,
             reply_to: None,
             link: None,
+            deliver_at_ms: None,
         }
     }
 
