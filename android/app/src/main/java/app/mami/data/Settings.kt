@@ -141,13 +141,36 @@ class Settings(context: Context) {
         remove("status_sent_at")
     }
 
-    /** Forgets everything except the server address. */
+    /** Theme colours ("ROSE", "OCEAN", ...), kept across sign-outs. */
+    var palette: String?
+        get() = prefs.getString(KEY_PALETTE, null)
+        set(value) = prefs.edit { putString(KEY_PALETTE, value) }
+
+    /** "SYSTEM", "LIGHT" or "DARK", kept across sign-outs. */
+    var darkMode: String?
+        get() = prefs.getString(KEY_DARK_MODE, null)
+        set(value) = prefs.edit { putString(KEY_DARK_MODE, value) }
+
+    var chatWallpaper: Boolean
+        get() = prefs.getBoolean(KEY_WALLPAPER, true)
+        set(value) = prefs.edit { putBoolean(KEY_WALLPAPER, value) }
+
+    /** Debug builds only: use the simulated partner instead of the server. */
+    var demoMode: Boolean
+        get() = prefs.getBoolean(KEY_DEMO, false)
+        set(value) = prefs.edit { putBoolean(KEY_DEMO, value) }
+
+    /** Forgets everything except the server address, appearance and demo mode. */
     fun clearAll() {
         cachedToken = null
-        val server = prefs.getString(KEY_SERVER, null)
+        val kept = listOf(KEY_SERVER, KEY_PALETTE, KEY_DARK_MODE).associateWith { prefs.getString(it, null) }
+        val wallpaper = chatWallpaper
+        val demo = demoMode
         prefs.edit(commit = true) {
             clear()
-            if (server != null) putString(KEY_SERVER, server)
+            kept.forEach { (key, value) -> if (value != null) putString(key, value) }
+            putBoolean(KEY_WALLPAPER, wallpaper)
+            putBoolean(KEY_DEMO, demo)
         }
         _shares.value = readShares()
         _quickStatus.value = null
@@ -165,5 +188,9 @@ class Settings(context: Context) {
         const val KEY_SERVER = "server_url"
         const val KEY_TOKEN = "token"
         const val KEY_PICKLE = "pickle_key"
+        const val KEY_PALETTE = "palette"
+        const val KEY_DARK_MODE = "dark_mode"
+        const val KEY_WALLPAPER = "chat_wallpaper"
+        const val KEY_DEMO = "demo_mode"
     }
 }

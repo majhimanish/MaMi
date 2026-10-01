@@ -1,6 +1,12 @@
 package app.mami.ui.chat
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,23 +16,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Battery2Bar
-import androidx.compose.material.icons.filled.Battery5Bar
-import androidx.compose.material.icons.filled.BatteryAlert
-import androidx.compose.material.icons.filled.BatteryChargingFull
-import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.DoNotDisturbOn
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.SettingsEthernet
-import androidx.compose.material.icons.filled.SignalCellular4Bar
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Vibration
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,10 +31,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.mami.core.DeviceStatus
 import app.mami.core.NetworkKind
 import app.mami.core.NudgeKind
@@ -46,6 +48,11 @@ import app.mami.core.RingerMode
 import app.mami.core.ShareKind
 import app.mami.data.PresenceDto
 import app.mami.ui.Format
+import app.mami.ui.components.Avatar
+import app.mami.ui.components.BatteryGauge
+import app.mami.ui.components.MiniClock
+import app.mami.ui.components.SignalBars
+import app.mami.ui.theme.Mami
 
 /** Everything MaMi knows about how the partner is doing, so nobody has to guess. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -63,98 +70,144 @@ fun PartnerSheet(
     onNudge: (NudgeKind) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Avatar(name, online = presence?.online == true, size = 56)
-                Column(Modifier.padding(start = 16.dp)) {
-                    Text(name, style = MaterialTheme.typography.headlineSmall)
-                    Text(email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            hints.forEach { hint ->
-                Row(Modifier.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        hint.icon,
-                        contentDescription = null,
-                        tint = if (hint.urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Text(hint.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 12.dp))
-                }
-            }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        dragHandle = null,
+    ) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+            Hero(name, email, status, presence, now)
+            Column(Modifier.padding(horizontal = 18.dp)) {
+                Spacer(Modifier.height(16.dp))
+                hints.filter { it.text != "Online now" }.forEach { hint -> HintCard(hint) }
 
-            Spacer(Modifier.height(16.dp))
-            if (status == null) {
-                Text(
-                    "$name's phone hasn't shared anything yet. It will once the app has run on their phone.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    BatteryTile(status, Modifier.weight(1f))
-                    NetworkTile(status, Modifier.weight(1f))
+                Spacer(Modifier.height(8.dp))
+                if (status == null) {
+                    Text(
+                        "$name's phone hasn't shared anything yet. It will once MaMi has run on their phone.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        BatteryTile(status, Modifier.weight(1f))
+                        NetworkTile(status, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SoundTile(status, Modifier.weight(1f))
+                        TimeTile(status, now, Modifier.weight(1f))
+                    }
+                    if (statusReceivedAt != null && statusReceivedAt > 0) {
+                        Text(
+                            "Updated ${Format.relative(status.capturedAtMs.takeIf { it > 0 } ?: statusReceivedAt, now)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    val hidden = hiddenBecauseNotShared(rawStatus, myShares)
+                    if (hidden.isNotEmpty()) {
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        ) {
+                            Text(
+                                "🔁 $name shares their ${hidden.joinToString(", ")}. Share yours in Settings to see it — sharing is always two-way.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(14.dp),
+                            )
+                        }
+                    }
                 }
+
+                Spacer(Modifier.height(22.dp))
+                Text("Send a little something", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SoundTile(status, Modifier.weight(1f))
-                    TimeTile(status, now, Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+                    listOf(
+                        NudgeKind.THINKING_OF_YOU to ("💗" to "Thinking"),
+                        NudgeKind.HUG to ("🤗" to "Hug"),
+                        NudgeKind.KISS to ("😘" to "Kiss"),
+                        NudgeKind.MISS_YOU to ("🥺" to "Miss you"),
+                    ).forEach { (kind, look) -> NudgeButton(look.first, look.second) { onNudge(kind) } }
                 }
-                if (statusReceivedAt != null && statusReceivedAt > 0) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Updated ${Format.relative(status.capturedAtMs.takeIf { it > 0 } ?: statusReceivedAt, now)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                val hidden = hiddenBecauseNotShared(rawStatus, myShares)
-                if (hidden.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "$name shares their ${hidden.joinToString(", ")}. Turn on sharing yours in Settings to see it — sharing is always two-way.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Spacer(Modifier.height(28.dp))
             }
-
-            Spacer(Modifier.height(20.dp))
-            Text("Send a little something", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(
-                    NudgeKind.THINKING_OF_YOU to "💗",
-                    NudgeKind.HUG to "🤗",
-                    NudgeKind.KISS to "😘",
-                    NudgeKind.MISS_YOU to "🥺",
-                ).forEach { (kind, emoji) ->
-                    AssistChip(onClick = { onNudge(kind) }, label = { Text(emoji, style = MaterialTheme.typography.titleLarge) })
-                }
-            }
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
 @Composable
-private fun Tile(icon: ImageVector, title: String, value: String, detail: String?, modifier: Modifier) {
-    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = modifier) {
-        Column(Modifier.padding(14.dp)) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
+private fun Hero(name: String, email: String, status: DeviceStatus?, presence: PresenceDto?, now: Long) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(Mami.colors.brush)
+            .padding(top = 14.dp, bottom = 22.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.6f)),
+            )
+            Spacer(Modifier.height(16.dp))
+            Box(
+                Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.92f))
+                    .padding(4.dp),
+            ) {
+                Avatar(name, size = 92.dp, battery = status?.batteryPercent, charging = status?.charging == true, online = presence?.online == true)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White)
+            Text(
+                when {
+                    presence?.online == true -> "● Online now"
+                    presence?.lastSeenMs != null -> "Last seen ${Format.relative(presence.lastSeenMs, now)}"
+                    else -> email
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.9f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HintCard(hint: Hint) {
+    val tint = if (hint.urgent) Mami.colors.bad else MaterialTheme.colorScheme.primary
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = tint.copy(alpha = 0.1f),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(34.dp).clip(CircleShape).background(tint.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+                Icon(hint.icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            }
+            Text(hint.text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 12.dp))
+        }
+    }
+}
+
+@Composable
+private fun Tile(title: String, value: String, detail: String?, modifier: Modifier, visual: @Composable () -> Unit) {
+    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHighest, modifier = modifier) {
+        Column(Modifier.padding(14.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.height(76.dp), contentAlignment = Alignment.Center) { visual() }
+            Spacer(Modifier.height(6.dp))
             Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleLarge)
+            Text(value, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             if (detail != null) {
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
             }
         }
     }
@@ -164,42 +217,39 @@ private fun Tile(icon: ImageVector, title: String, value: String, detail: String
 private fun BatteryTile(status: DeviceStatus, modifier: Modifier) {
     val level = status.batteryPercent
     val charging = status.charging == true
-    val icon = when {
-        level == null -> BatteryHidden
-        charging -> Icons.Filled.BatteryChargingFull
-        level <= 15 -> Icons.Filled.BatteryAlert
-        level <= 40 -> Icons.Filled.Battery2Bar
-        level <= 80 -> Icons.Filled.Battery5Bar
-        else -> Icons.Filled.BatteryFull
-    }
     Tile(
-        icon,
         "Battery",
-        level?.let { "$it%" } ?: "—",
         when {
             level == null -> "Not shared"
             charging -> "Charging"
-            status.charging == false -> "Not charging"
-            else -> null
+            level <= 15 -> "Running low"
+            else -> "Not charging"
         },
+        null,
         modifier,
-    )
+    ) { BatteryGauge(level, charging) }
 }
-
-private val BatteryHidden = Icons.Filled.BatteryFull
 
 @Composable
 private fun NetworkTile(status: DeviceStatus, modifier: Modifier) {
-    val (icon, value) = when (status.network) {
-        NetworkKind.WIFI -> Icons.Filled.Wifi to "Wi-Fi"
-        NetworkKind.CELLULAR -> Icons.Filled.SignalCellular4Bar to "Mobile data"
-        NetworkKind.ETHERNET -> Icons.Filled.SettingsEthernet to "Cable"
-        NetworkKind.OFFLINE -> Icons.Filled.WifiOff to "Offline"
-        NetworkKind.OTHER -> Icons.Filled.Wifi to "Connected"
-        null -> Icons.Filled.Wifi to "—"
+    val value = when (status.network) {
+        NetworkKind.WIFI -> "Wi-Fi"
+        NetworkKind.CELLULAR -> "Mobile data"
+        NetworkKind.ETHERNET -> "Cable"
+        NetworkKind.OFFLINE -> "Offline"
+        NetworkKind.OTHER -> "Online"
+        null -> "Not shared"
     }
-    val bars = status.signalLevel?.let { level -> "Signal " + "▮".repeat(level.coerceIn(0, 4)) + "▯".repeat(4 - level.coerceIn(0, 4)) }
-    Tile(icon, "Connection", value, if (status.network == null) "Not shared" else bars, modifier)
+    val signal = when (status.signalLevel) {
+        null -> null
+        0, 1 -> "Weak signal"
+        2 -> "Okay signal"
+        3 -> "Good signal"
+        else -> "Great signal"
+    }
+    Tile("Connection", value, signal, modifier) {
+        SignalBars(status.signalLevel, modifier = Modifier.graphicsLayer { scaleX = 2.4f; scaleY = 2.4f })
+    }
 }
 
 @Composable
@@ -207,24 +257,54 @@ private fun SoundTile(status: DeviceStatus, modifier: Modifier) {
     val dnd = status.doNotDisturb == true
     val (icon, value) = when {
         dnd -> Icons.Filled.DoNotDisturbOn to "Do Not Disturb"
-        status.ringer == RingerMode.SILENT -> Icons.AutoMirrored.Filled.VolumeOff to "Silent"
+        status.ringer == RingerMode.SILENT -> Icons.Filled.NotificationsOff to "Silent"
         status.ringer == RingerMode.VIBRATE -> Icons.Filled.Vibration to "Vibrate"
         status.ringer == RingerMode.NORMAL -> Icons.AutoMirrored.Filled.VolumeUp to "Ringer on"
-        else -> Icons.AutoMirrored.Filled.VolumeUp to "—"
+        else -> Icons.AutoMirrored.Filled.VolumeUp to "Not shared"
     }
-    Tile(icon, "Sound", value, if (status.ringer == null && status.doNotDisturb == null) "Not shared" else null, modifier)
+    val quiet = dnd || status.ringer == RingerMode.SILENT || status.ringer == RingerMode.VIBRATE
+    val tint = if (quiet) Mami.colors.warn else MaterialTheme.colorScheme.primary
+    Tile("Sound", value, if (quiet) "Calls may go unnoticed" else null, modifier) {
+        Box(Modifier.size(64.dp).clip(CircleShape).background(tint.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(32.dp))
+        }
+    }
 }
 
 @Composable
 private fun TimeTile(status: DeviceStatus, now: Long, modifier: Modifier) {
-    val time = partnerLocalTime(status, now)
+    val hm = partnerLocalHourMinute(status, now)
     Tile(
-        Icons.Filled.Public,
         "Their time",
-        time ?: "—",
-        status.timezone?.substringAfterLast('/')?.replace('_', ' ') ?: "Not shared",
+        hm?.let { localTime(it.first, it.second) } ?: "Not shared",
+        status.timezone?.substringAfterLast('/')?.replace('_', ' '),
         modifier,
-    )
+    ) {
+        if (hm != null) MiniClock(hm.first, hm.second) else Text("🌍", fontSize = 40.sp)
+    }
+}
+
+@Composable
+private fun NudgeButton(emoji: String, label: String, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 1.25f else 1f, spring(dampingRatio = 0.35f), label = "nudge")
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            onClick = onClick,
+            interactionSource = interaction,
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.size(62.dp).graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
+        ) {
+            Box(contentAlignment = Alignment.Center) { Text(emoji, fontSize = 28.sp) }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium)
+    }
 }
 
 /** Things the partner shares that I can't see because I don't share them myself. */

@@ -7,6 +7,7 @@ import app.mami.data.CryptoStore
 import app.mami.data.Realtime
 import app.mami.data.Settings
 import app.mami.data.db.MamiDatabase
+import app.mami.demo.DemoBackend
 import app.mami.device.DeviceStatusCollector
 import app.mami.sync.Messenger
 import app.mami.sync.Notifications
@@ -41,4 +42,7 @@ class AppGraph(context: Context) {
         notifications = notifications,
         scope = scope,
     )
+
+    /** Simulated partner for the debug playground. */
+    val demo: DemoBackend by lazy { DemoBackend(scope) }
 }

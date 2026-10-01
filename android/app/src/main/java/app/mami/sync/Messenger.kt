@@ -73,58 +73,58 @@ class Messenger(
     private val collector: DeviceStatusCollector,
     private val notifications: Notifications,
     private val scope: CoroutineScope,
-) {
+) : MamiBackend {
     private val dao = db.messages()
 
     private val _signedIn = MutableStateFlow(settings.token != null)
-    val signedIn: StateFlow<Boolean> = _signedIn.asStateFlow()
+    override val signedIn: StateFlow<Boolean> = _signedIn.asStateFlow()
 
     private val _displayName = MutableStateFlow(settings.displayName)
-    val displayName: StateFlow<String> = _displayName.asStateFlow()
+    override val displayName: StateFlow<String> = _displayName.asStateFlow()
 
     private val _sharingConfirmed = MutableStateFlow(settings.sharingConfirmed)
-    val sharingConfirmed: StateFlow<Boolean> = _sharingConfirmed.asStateFlow()
+    override val sharingConfirmed: StateFlow<Boolean> = _sharingConfirmed.asStateFlow()
 
     private val _me = MutableStateFlow<MeDto?>(null)
     val me: StateFlow<MeDto?> = _me.asStateFlow()
 
     private val _invite = MutableStateFlow<InviteDto?>(null)
-    val invite: StateFlow<InviteDto?> = _invite.asStateFlow()
+    override val invite: StateFlow<InviteDto?> = _invite.asStateFlow()
 
     private val _partner = MutableStateFlow(loadCachedPartner())
-    val partner: StateFlow<PartnerDto?> = _partner.asStateFlow()
+    override val partner: StateFlow<PartnerDto?> = _partner.asStateFlow()
 
     private val _presence = MutableStateFlow(_partner.value?.presence)
-    val presence: StateFlow<PresenceDto?> = _presence.asStateFlow()
+    override val presence: StateFlow<PresenceDto?> = _presence.asStateFlow()
 
     private val _partnerStatus = MutableStateFlow(loadCachedStatus())
     /** The partner's last status and when it arrived. */
-    val partnerStatus: StateFlow<Pair<DeviceStatus, Long>?> = _partnerStatus.asStateFlow()
+    override val partnerStatus: StateFlow<Pair<DeviceStatus, Long>?> = _partnerStatus.asStateFlow()
 
     private val _typing = MutableStateFlow(false)
-    val partnerTyping: StateFlow<Boolean> = _typing.asStateFlow()
+    override val partnerTyping: StateFlow<Boolean> = _typing.asStateFlow()
 
     private val _secure = MutableStateFlow(false)
     /** An end-to-end encrypted session with the partner's current phone exists. */
-    val secure: StateFlow<Boolean> = _secure.asStateFlow()
+    override val secure: StateFlow<Boolean> = _secure.asStateFlow()
 
     private val _keyChanged = MutableStateFlow(settings.partnerKeyChanged)
-    val partnerKeyChanged: StateFlow<Boolean> = _keyChanged.asStateFlow()
+    override val partnerKeyChanged: StateFlow<Boolean> = _keyChanged.asStateFlow()
 
     private val _verifiedKey = MutableStateFlow(settings.verifiedPartnerKey)
-    val verifiedPartnerKey: StateFlow<String?> = _verifiedKey.asStateFlow()
+    override val verifiedPartnerKey: StateFlow<String?> = _verifiedKey.asStateFlow()
 
     private val _incomingNudges = MutableSharedFlow<NudgeKind>(extraBufferCapacity = 8)
-    val incomingNudges: SharedFlow<NudgeKind> = _incomingNudges
+    override val incomingNudges: SharedFlow<NudgeKind> = _incomingNudges
 
-    val messages: Flow<List<MessageEntity>> = dao.observeAll()
-    val connection: StateFlow<ConnectionState> = realtime.state
-    val shares: StateFlow<Set<ShareKind>> = settings.sharesFlow
-    val quickStatus: StateFlow<SavedQuickStatus?> = settings.quickStatusFlow
+    override val messages: Flow<List<MessageEntity>> = dao.observeAll()
+    override val connection: StateFlow<ConnectionState> = realtime.state
+    override val shares: StateFlow<Set<ShareKind>> = settings.sharesFlow
+    override val quickStatus: StateFlow<SavedQuickStatus?> = settings.quickStatusFlow
 
     /** Set by the chat screen while it is visible. */
     @Volatile
-    var chatVisible = false
+    override var chatVisible = false
 
     @Volatile
     private var foreground = false
@@ -213,9 +213,9 @@ class Messenger(
 
     // ---- signing in -----------------------------------------------------------------
 
-    suspend fun requestCode(email: String) = api.authStart(email.trim())
+    override suspend fun requestCode(email: String) = api.authStart(email.trim())
 
-    suspend fun verifyCode(email: String, code: String) {
+    override suspend fun verifyCode(email: String, code: String) {
         val verified = api.authVerify(email.trim(), code.filter(Char::isDigit))
         // A new sign-in always gets fresh keys on this phone.
         wipeConversation()
@@ -227,72 +227,72 @@ class Messenger(
         if (foreground) realtime.start()
     }
 
-    suspend fun setDisplayName(name: String) {
+    override suspend fun setDisplayName(name: String) {
         val clean = name.trim()
         api.setDisplayName(clean)
         settings.displayName = clean
         _displayName.value = clean
     }
 
-    fun confirmSharing(shares: Set<ShareKind>, lowBatteryAlerts: Boolean) {
+    override fun confirmSharing(shares: Set<ShareKind>, lowBatteryAlerts: Boolean) {
         settings.shares = shares
         settings.lowBatteryAlerts = lowBatteryAlerts
         settings.sharingConfirmed = true
         _sharingConfirmed.value = true
     }
 
-    fun setShares(shares: Set<ShareKind>) {
+    override fun setShares(shares: Set<ShareKind>) {
         settings.shares = shares
         launchSafely { publishStatus(force = true) }
     }
 
-    fun setQuickStatus(status: SavedQuickStatus?) {
+    override fun setQuickStatus(status: SavedQuickStatus?) {
         settings.quickStatus = status
         launchSafely { publishStatus(force = true) }
     }
 
-    var lowBatteryAlerts: Boolean
+    override var lowBatteryAlerts: Boolean
         get() = settings.lowBatteryAlerts
         set(value) {
             settings.lowBatteryAlerts = value
         }
 
-    var hideNotificationText: Boolean
+    override var hideNotificationText: Boolean
         get() = settings.hideNotificationText
         set(value) {
             settings.hideNotificationText = value
         }
 
-    var serverUrl: String
+    override var serverUrl: String
         get() = settings.serverUrl
         set(value) {
             settings.serverUrl = value
         }
 
-    val email: String? get() = settings.email
+    override val email: String? get() = settings.email
 
     // ---- pairing ------------------------------------------------------------------
 
-    suspend fun createInvite(partnerEmail: String?): InviteDto =
+    override suspend fun createInvite(partnerEmail: String?): InviteDto =
         api.createInvite(partnerEmail?.trim()?.ifBlank { null }).also { _invite.value = it }
 
-    suspend fun cancelInvite() {
+    override suspend fun cancelInvite() {
         api.cancelInvite()
         _invite.value = null
     }
 
-    suspend fun acceptInvite(code: String) {
+    override suspend fun acceptInvite(code: String) {
         api.acceptInvite(code)
         refresh()
     }
 
     /** Either partner can leave at any time. The conversation is deleted on both phones. */
-    suspend fun unpair() {
+    override suspend fun unpair() {
         api.unpair()
         refresh()
     }
 
-    suspend fun signOut() {
+    override suspend fun signOut() {
         try {
             api.signOut()
         } catch (e: IOException) {
@@ -301,18 +301,18 @@ class Messenger(
         wipeEverything()
     }
 
-    suspend fun deleteAccount() {
+    override suspend fun deleteAccount() {
         api.deleteAccount()
         wipeEverything()
     }
 
     /** The code both partners compare in person, or null before the partner has keys. */
-    suspend fun safetyCode(): String? {
+    override suspend fun safetyCode(): String? {
         val partnerKey = _partner.value?.identity?.ed25519 ?: return null
         return app.mami.core.safetyCode(crypto.identity().ed25519, partnerKey)
     }
 
-    fun markPartnerVerified() {
+    override fun markPartnerVerified() {
         val key = _partner.value?.identity?.ed25519 ?: return
         settings.verifiedPartnerKey = key
         settings.partnerKeyChanged = false
@@ -320,26 +320,26 @@ class Messenger(
         _keyChanged.value = false
     }
 
-    fun dismissKeyChanged() {
+    override fun dismissKeyChanged() {
         settings.partnerKeyChanged = false
         _keyChanged.value = false
     }
 
-    val partnerName: String
+    override val partnerName: String
         get() = _partner.value?.let { p -> p.displayName.ifBlank { p.email.substringBefore('@') } } ?: "Your partner"
 
     // ---- conversation ---------------------------------------------------------------
 
-    fun sendText(text: String, replyTo: String? = null) {
+    override fun sendText(text: String, replyTo: String?) {
         val body = text.trim()
         if (body.isEmpty()) return
         queue(MessageKind.TEXT, body, replyTo = replyTo)
         stopTyping()
     }
 
-    fun sendNudge(kind: NudgeKind) = queue(MessageKind.NUDGE, kind.name)
+    override fun sendNudge(kind: NudgeKind) = queue(MessageKind.NUDGE, kind.name)
 
-    fun onComposerChanged(text: String) {
+    override fun onComposerChanged(text: String) {
         if (text.isBlank()) {
             stopTyping()
             return
@@ -352,7 +352,7 @@ class Messenger(
     }
 
     /** The chat is on screen: everything incoming counts as read. */
-    fun markChatRead() {
+    override fun markChatRead() {
         launchSafely {
             notifications.clearConversation()
             if (dao.markIncomingRead(System.currentTimeMillis()) > 0) flushReadReceipts()
@@ -360,7 +360,7 @@ class Messenger(
     }
 
     /** Fetches the latest from the server now (pull to refresh, app start). */
-    suspend fun refresh() {
+    override suspend fun refresh() {
         bootstrapLock.withLock {
             if (settings.token == null) return
             val me = try {

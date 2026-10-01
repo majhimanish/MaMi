@@ -1,15 +1,17 @@
 package app.mami.ui.chat
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,55 +21,71 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AccessTime
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Battery2Bar
+import androidx.compose.material.icons.filled.Battery4Bar
+import androidx.compose.material.icons.filled.Battery6Bar
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
@@ -78,134 +96,149 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.mami.core.DeviceStatus
+import app.mami.core.NetworkKind
 import app.mami.core.NudgeKind
+import app.mami.core.RingerMode
+import app.mami.data.ConnectionState
+import app.mami.data.PresenceDto
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
-import app.mami.data.db.MessageState
-import app.mami.sync.Notifications
 import app.mami.ui.Format
-import app.mami.ui.MainViewModel
-import app.mami.ui.theme.BrandGradient
+import app.mami.ui.Overlay
+import app.mami.ui.UiController
+import app.mami.ui.components.Avatar
+import app.mami.ui.components.HeartBurst
+import app.mami.ui.components.SignalBars
+import app.mami.ui.components.StatusPill
+import app.mami.ui.components.TypingDots
+import app.mami.ui.components.batteryColor
+import app.mami.ui.components.heartWallpaper
+import app.mami.ui.theme.Mami
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Gap after which a new run of bubbles starts. */
+private const val GROUP_GAP_MS = 5 * 60_000L
+
 @Composable
-fun ChatScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onVerify: () -> Unit) {
-    val messenger = vm.messenger
-    val messages by messenger.messages.collectAsStateWithLifecycle(initialValue = emptyList())
-    val partner by messenger.partner.collectAsStateWithLifecycle()
-    val presence by messenger.presence.collectAsStateWithLifecycle()
-    val statusPair by messenger.partnerStatus.collectAsStateWithLifecycle()
-    val typing by messenger.partnerTyping.collectAsStateWithLifecycle()
-    val secure by messenger.secure.collectAsStateWithLifecycle()
-    val keyChanged by messenger.partnerKeyChanged.collectAsStateWithLifecycle()
-    val myShares by messenger.shares.collectAsStateWithLifecycle()
+fun ChatScreen(ui: UiController) {
+    val backend = ui.backend
+    val messages by backend.messages.collectAsStateWithLifecycle(initialValue = emptyList())
+    val partner by backend.partner.collectAsStateWithLifecycle()
+    val presence by backend.presence.collectAsStateWithLifecycle()
+    val statusPair by backend.partnerStatus.collectAsStateWithLifecycle()
+    val typing by backend.partnerTyping.collectAsStateWithLifecycle()
+    val secure by backend.secure.collectAsStateWithLifecycle()
+    val keyChanged by backend.partnerKeyChanged.collectAsStateWithLifecycle()
+    val myShares by backend.shares.collectAsStateWithLifecycle()
+    val connection by backend.connection.collectAsStateWithLifecycle()
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             delay(30_000)
             value = System.currentTimeMillis()
         }
     }
-    val name = messenger.partnerName
+    val name = partner?.displayName?.ifBlank { null } ?: partner?.email?.substringBefore('@') ?: "Your partner"
     val status = visiblePartnerStatus(statusPair?.first, myShares)
     val hints = partnerHints(status, presence, name, now)
 
-    var showPartner by rememberSaveable { mutableStateOf(false) }
     var details by remember { mutableStateOf<MessageEntity?>(null) }
-    var nudgeShown by remember { mutableStateOf<NudgeKind?>(null) }
+    var burst by remember { mutableIntStateOf(0) }
     val haptics = LocalHapticFeedback.current
 
     // While the chat is on screen, everything that arrives counts as read.
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, backend) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
-                    messenger.chatVisible = true
-                    messenger.markChatRead()
+                    backend.chatVisible = true
+                    backend.markChatRead()
                 }
-                Lifecycle.Event.ON_PAUSE -> messenger.chatVisible = false
+                Lifecycle.Event.ON_PAUSE -> backend.chatVisible = false
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            messenger.chatVisible = false
+            backend.chatVisible = false
         }
     }
-    LaunchedEffect(Unit) {
-        messenger.incomingNudges.collect {
-            nudgeShown = it
+    LaunchedEffect(messages.size) {
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) backend.markChatRead()
+    }
+    LaunchedEffect(backend) {
+        backend.incomingNudges.collect {
+            burst++
             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            delay(2200)
-            nudgeShown = null
         }
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { showPartner = true },
-                    ) {
-                        Avatar(name, online = presence?.online == true)
-                        Column(Modifier.padding(start = 12.dp)) {
-                            Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            val subtitle = when {
-                                typing -> "typing…"
-                                hints.isNotEmpty() -> hints.first().text
-                                else -> "Tap to see how they're doing"
-                            }
-                            Text(
-                                subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (hints.firstOrNull()?.urgent == true && !typing) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onOpenSettings) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
-                },
+            ChatTopBar(
+                name = name,
+                status = status,
+                presence = presence,
+                typing = typing,
+                hint = hints.firstOrNull(),
+                now = now,
+                onOpenPartner = { ui.partnerSheetOpen = true },
+                onSettings = { ui.overlay = Overlay.Settings },
             )
         },
         bottomBar = {
             Composer(
-                onChanged = messenger::onComposerChanged,
-                onSend = { messenger.sendText(it) },
-                onNudge = { messenger.sendNudge(it) },
+                onChanged = backend::onComposerChanged,
+                onSend = { backend.sendText(it) },
+                onNudge = { kind ->
+                    backend.sendNudge(kind)
+                    burst++
+                },
             )
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .heartWallpaper(MaterialTheme.colorScheme.primary.copy(alpha = if (Mami.colors.isDark) 0.06f else 0.045f), Mami.colors.wallpaper),
+        ) {
             Column(Modifier.fillMaxSize()) {
+                if (connection != ConnectionState.Connected) {
+                    Banner(Icons.Filled.CloudOff, if (connection == ConnectionState.Connecting) "Connecting…" else "Offline. Messages wait on your phone and go out by themselves.")
+                }
                 if (!secure) {
-                    Banner(Icons.Filled.Lock, "Setting up end-to-end encryption with $name's phone. Messages will be sent as soon as it's ready.")
+                    Banner(null, "Setting up end-to-end encryption with $name's phone. Messages go out as soon as it's ready.", progress = true)
                 }
                 if (keyChanged) {
                     Banner(
                         Icons.Filled.Warning,
-                        "$name's security code changed, probably because of a new phone. Compare codes to be sure it's really them.",
-                        action = "Compare" to onVerify,
-                        dismiss = messenger::dismissKeyChanged,
+                        "$name's security code changed, probably a new phone. Compare codes to be sure it's really them.",
+                        actions = {
+                            TextButton(onClick = backend::dismissKeyChanged) { Text("Dismiss") }
+                            TextButton(onClick = { ui.overlay = Overlay.Safety }) { Text("Compare") }
+                        },
                     )
                 }
-                Conversation(messages, name, now, onDetails = { details = it }, modifier = Modifier.weight(1f))
+                Conversation(
+                    messages = messages,
+                    partnerName = name,
+                    typing = typing,
+                    now = now,
+                    onDetails = { details = it },
+                    modifier = Modifier.weight(1f),
+                )
             }
-            NudgeOverlay(nudgeShown)
+            HeartBurst(burst)
         }
     }
 
-    if (showPartner) {
+    if (ui.partnerSheetOpen) {
         PartnerSheet(
             name = name,
             email = partner?.email.orEmpty(),
@@ -216,58 +249,158 @@ fun ChatScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onVerify: () -> Un
             hints = hints,
             myShares = myShares,
             now = now,
-            onNudge = { messenger.sendNudge(it) },
-            onDismiss = { showPartner = false },
+            onNudge = { kind ->
+                backend.sendNudge(kind)
+                burst++
+            },
+            onDismiss = { ui.partnerSheetOpen = false },
         )
     }
-    details?.let { message -> MessageDetails(message, name) { details = null } }
+    details?.let { message -> MessageDetailsSheet(message, name) { details = null } }
 }
 
 @Composable
-fun Avatar(name: String, online: Boolean, size: Int = 40) {
-    Box {
-        Box(
-            Modifier.size(size.dp).clip(CircleShape).background(BrandGradient),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                name.firstOrNull()?.uppercase() ?: "♥",
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                fontSize = (size * 0.42f).sp,
+private fun ChatTopBar(
+    name: String,
+    status: DeviceStatus?,
+    presence: PresenceDto?,
+    typing: Boolean,
+    hint: Hint?,
+    now: Long,
+    onOpenPartner: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
+        Column(Modifier.statusBarsPadding()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenPartner)
+                    .padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Avatar(
+                    name,
+                    size = 50.dp,
+                    battery = status?.batteryPercent,
+                    charging = status?.charging == true,
+                    online = presence?.online == true,
+                )
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    AnimatedContent(typing, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "subtitle") { isTyping ->
+                        if (isTyping) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(20.dp)) {
+                                TypingDots(color = MaterialTheme.colorScheme.primary, dotSize = 5.dp)
+                                Text("  typing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                            }
+                        } else {
+                            Text(
+                                hint?.text ?: "Tap to see how they're doing",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when {
+                                    hint?.urgent == true -> MaterialTheme.colorScheme.error
+                                    hint?.text == "Online now" -> Mami.colors.good
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.height(20.dp),
+                            )
+                        }
+                    }
+                }
+                IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
+            }
+            StatusStrip(status, now, onOpenPartner)
+        }
+    }
+}
+
+fun batteryIcon(percent: Int?, charging: Boolean): ImageVector = when {
+    percent == null -> Icons.Filled.BatteryFull
+    charging -> Icons.Filled.BatteryChargingFull
+    percent <= 15 -> Icons.Filled.BatteryAlert
+    percent <= 40 -> Icons.Filled.Battery2Bar
+    percent <= 70 -> Icons.Filled.Battery4Bar
+    percent <= 90 -> Icons.Filled.Battery6Bar
+    else -> Icons.Filled.BatteryFull
+}
+
+/** Everything about the partner's phone at a glance, in one swipeable row. */
+@Composable
+private fun StatusStrip(status: DeviceStatus?, now: Long, onClick: () -> Unit) {
+    if (status == null) return
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        status.quickStatus?.takeIf { it.untilMs == null || it.untilMs!! > now }?.let { quick ->
+            StatusPill(null, "${quick.emoji} ${quick.label}", tint = MaterialTheme.colorScheme.secondary, onClick = onClick)
+        }
+        status.batteryPercent?.let { percent ->
+            val charging = status.charging == true
+            StatusPill(
+                batteryIcon(percent, charging),
+                if (charging) "$percent% · charging" else "$percent%",
+                tint = batteryColor(percent, charging),
+                onClick = onClick,
             )
         }
-        if (online) {
-            Box(
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .size((size / 3.6f).dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF2EC27E))
-                    .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape),
+        status.network?.let { network ->
+            val (icon, label) = when (network) {
+                NetworkKind.WIFI -> Icons.Filled.Wifi to "Wi-Fi"
+                NetworkKind.CELLULAR -> Icons.Filled.SignalCellularAlt to "Mobile data"
+                NetworkKind.ETHERNET -> Icons.Filled.Wifi to "Cable"
+                NetworkKind.OFFLINE -> Icons.Filled.WifiOff to "Offline"
+                NetworkKind.OTHER -> Icons.Filled.Wifi to "Online"
+            }
+            StatusPill(
+                icon,
+                label,
+                tint = if (network == NetworkKind.OFFLINE) Mami.colors.bad else MaterialTheme.colorScheme.primary,
+                trailing = status.signalLevel?.let { level -> @Composable { SignalBars(level) } },
+                onClick = onClick,
             )
+        }
+        if (status.doNotDisturb == true || status.ringer != null) {
+            val (icon, label) = when {
+                status.doNotDisturb == true -> Icons.Filled.DoNotDisturbOn to "Do Not Disturb"
+                status.ringer == RingerMode.SILENT -> Icons.Filled.NotificationsOff to "Silent"
+                status.ringer == RingerMode.VIBRATE -> Icons.Filled.Vibration to "Vibrate"
+                else -> Icons.AutoMirrored.Filled.VolumeUp to "Ringer on"
+            }
+            val quiet = status.doNotDisturb == true || status.ringer == RingerMode.SILENT || status.ringer == RingerMode.VIBRATE
+            StatusPill(icon, label, tint = if (quiet) Mami.colors.warn else MaterialTheme.colorScheme.primary, onClick = onClick)
+        }
+        partnerLocalTime(status, now)?.let { time ->
+            StatusPill(Icons.Filled.Schedule, "$time there", tint = MaterialTheme.colorScheme.tertiary, onClick = onClick)
         }
     }
 }
 
 @Composable
 private fun Banner(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector?,
     text: String,
-    action: Pair<String, () -> Unit>? = null,
-    dismiss: (() -> Unit)? = null,
+    progress: Boolean = false,
+    actions: (@Composable () -> Unit)? = null,
 ) {
     Surface(color = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                if (progress) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                } else if (icon != null) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
                 Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 10.dp))
             }
-            if (action != null || dismiss != null) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    dismiss?.let { TextButton(onClick = it) { Text("Dismiss") } }
-                    action?.let { (label, onClick) -> TextButton(onClick = onClick) { Text(label) } }
-                }
+            if (actions != null) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { actions() }
             }
         }
     }
@@ -277,141 +410,95 @@ private fun Banner(
 private fun Conversation(
     messages: List<MessageEntity>,
     partnerName: String,
+    typing: Boolean,
     now: Long,
     onDetails: (MessageEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val newestFirst = remember(messages) { messages.asReversed() }
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(0)
+    val newestMine = remember(messages) { newestFirst.firstOrNull { it.fromMe && it.kind == MessageKind.TEXT }?.id }
+    LaunchedEffect(messages.size, typing) {
+        if (listState.firstVisibleItemIndex <= 2) listState.animateScrollToItem(0)
     }
-    if (messages.isEmpty()) {
-        Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-            Text(
-                "Say hi to $partnerName 💗\nEverything here is end-to-end encrypted.",
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        return
-    }
-    LazyColumn(
-        state = listState,
-        reverseLayout = true,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        items(newestFirst.size, key = { newestFirst[it].id }) { index ->
-            val message = newestFirst[index]
-            val older = newestFirst.getOrNull(index + 1)
-            Column {
-                if (older == null || !Format.sameDay(older.sortAtMs, message.sortAtMs)) {
-                    DaySeparator(Format.day(message.sortAtMs, now))
-                }
-                when (message.kind) {
-                    MessageKind.TEXT -> Bubble(message, onClick = { onDetails(message) })
-                    else -> EventRow(message, partnerName, onClick = { onDetails(message) })
-                }
+    val showJump by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
+
+    Box(modifier.fillMaxSize()) {
+        if (messages.isEmpty() && !typing) {
+            Column(
+                Modifier.fillMaxSize().padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("💌", fontSize = 64.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("Say hi to $partnerName", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Everything here is end-to-end encrypted.\nTap ❤️ to send a little \"thinking of you\".",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
-    }
-}
-
-@Composable
-private fun DaySeparator(label: String) {
-    Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-            Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
-        }
-    }
-}
-
-@Composable
-private fun Bubble(message: MessageEntity, onClick: () -> Unit) {
-    val mine = message.fromMe
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
-        Surface(
-            color = if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-            shape = RoundedCornerShape(
-                topStart = 20.dp,
-                topEnd = 20.dp,
-                bottomStart = if (mine) 20.dp else 6.dp,
-                bottomEnd = if (mine) 6.dp else 20.dp,
-            ),
-            onClick = onClick,
-            modifier = Modifier.widthIn(max = 300.dp),
+        LazyColumn(
+            state = listState,
+            reverseLayout = true,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Column(Modifier.padding(start = 14.dp, end = 12.dp, top = 9.dp, bottom = 6.dp)) {
-                Text(message.body, style = MaterialTheme.typography.bodyLarge)
-                Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        Format.time(message.sentAtMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = contentColorWithAlpha(0.75f),
-                    )
-                    if (mine) {
-                        Spacer(Modifier.size(4.dp))
-                        StateIcon(message.state)
+            if (typing) {
+                item(key = "typing") { TypingBubble(Modifier.animateItem().padding(top = 8.dp)) }
+            }
+            itemsIndexed(newestFirst, key = { _, m -> m.id }) { index, message ->
+                val older = newestFirst.getOrNull(index + 1)
+                val newer = newestFirst.getOrNull(index - 1)
+                val first = older == null || !sameRun(older, message)
+                val last = newer == null || !sameRun(message, newer)
+                Column(Modifier.animateItem().padding(top = if (first) 10.dp else 2.dp)) {
+                    if (older == null || !Format.sameDay(older.sortAtMs, message.sortAtMs)) {
+                        DaySeparator(Format.day(message.sortAtMs, now))
                     }
+                    when (message.kind) {
+                        MessageKind.TEXT -> TextBubble(message, first, last) { onDetails(message) }
+                        MessageKind.NUDGE -> NudgeSticker(message, partnerName) { onDetails(message) }
+                        else -> BatteryAlertCard(message, partnerName) { onDetails(message) }
+                    }
+                    if (message.id == newestMine) ReceiptLine(message, partnerName)
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun contentColorWithAlpha(alpha: Float): Color =
-    androidx.compose.material3.LocalContentColor.current.copy(alpha = alpha)
-
-/** Clock → one tick → two ticks → two bright ticks. */
-@Composable
-fun StateIcon(state: Int) {
-    val (icon, description) = when (state) {
-        MessageState.PENDING -> Icons.Filled.AccessTime to "Waiting to send"
-        MessageState.SENT -> Icons.Filled.Check to "Sent"
-        MessageState.DELIVERED -> Icons.Filled.DoneAll to "Delivered to their phone"
-        else -> Icons.Filled.DoneAll to "Seen"
-    }
-    val tint = if (state == MessageState.READ) Color(0xFF7CF7FF) else contentColorWithAlpha(0.75f)
-    Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(15.dp))
-}
-
-@Composable
-private fun EventRow(message: MessageEntity, partnerName: String, onClick: () -> Unit) {
-    val text = when (message.kind) {
-        MessageKind.NUDGE -> if (message.fromMe) "You: ${Notifications.nudgeText(message.body)}" else "$partnerName ${Notifications.nudgeText(message.body)}"
-        MessageKind.ALERT -> if (message.fromMe) {
-            "🔋 Your phone told $partnerName it was at ${message.batteryPercent ?: "a few"}%"
-        } else {
-            Notifications.preview(message, partnerName)
-        }
-        else -> message.body
-    }
-    Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = if (message.kind == MessageKind.ALERT) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-            onClick = onClick,
+        AnimatedVisibility(
+            visible = showJump,
+            enter = scaleIn() + fadeIn(),
+            exit = scaleOut() + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
         ) {
-            Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(text, style = MaterialTheme.typography.bodySmall)
-                if (message.fromMe) {
-                    Spacer(Modifier.size(6.dp))
-                    StateIcon(message.state)
-                }
+            SmallFloatingActionButton(onClick = { scope.launch { listState.animateScrollToItem(0) } }) {
+                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Latest messages")
             }
         }
     }
 }
 
+private fun sameRun(a: MessageEntity, b: MessageEntity) =
+    a.fromMe == b.fromMe && a.kind == MessageKind.TEXT && b.kind == MessageKind.TEXT && kotlin.math.abs(b.sortAtMs - a.sortAtMs) < GROUP_GAP_MS
+
+private val nudges = listOf(
+    NudgeKind.THINKING_OF_YOU to "💗  Thinking of you",
+    NudgeKind.HUG to "🤗  Hug",
+    NudgeKind.KISS to "😘  Kiss",
+    NudgeKind.MISS_YOU to "🥺  Miss you",
+)
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Composer(onChanged: (String) -> Unit, onSend: (String) -> Unit, onNudge: (NudgeKind) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
-    Surface(tonalElevation = 3.dp) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -420,16 +507,20 @@ private fun Composer(onChanged: (String) -> Unit, onSend: (String) -> Unit, onNu
             verticalAlignment = Alignment.Bottom,
         ) {
             Box {
-                IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Filled.Favorite, contentDescription = "Send a hug or kiss", tint = MaterialTheme.colorScheme.primary)
+                Box(
+                    Modifier
+                        .size(50.dp)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = { onNudge(NudgeKind.THINKING_OF_YOU) },
+                            onLongClick = { menu = true },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Favorite, contentDescription = "Send a heart (hold for more)", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    listOf(
-                        NudgeKind.THINKING_OF_YOU to "💗 Thinking of you",
-                        NudgeKind.HUG to "🤗 Hug",
-                        NudgeKind.KISS to "😘 Kiss",
-                        NudgeKind.MISS_YOU to "🥺 Miss you",
-                    ).forEach { (kind, label) ->
+                    nudges.forEach { (kind, label) ->
                         DropdownMenuItem(text = { Text(label) }, onClick = {
                             menu = false
                             onNudge(kind)
@@ -443,95 +534,34 @@ private fun Composer(onChanged: (String) -> Unit, onSend: (String) -> Unit, onNu
                     text = it
                     onChanged(it)
                 },
-                placeholder = { Text("Message") },
+                placeholder = { Text("Say something sweet…") },
                 maxLines = 5,
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(26.dp),
                 colors = TextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     focusedIndicatorColor = Color.Transparent,
                     unfocusedIndicatorColor = Color.Transparent,
                     disabledIndicatorColor = Color.Transparent,
                 ),
                 modifier = Modifier.weight(1f),
             )
-            IconButton(
-                onClick = {
-                    onSend(text)
-                    text = ""
-                },
-                enabled = text.isNotBlank(),
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.primary)
+            AnimatedVisibility(visible = text.isNotBlank(), enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
+                Box(
+                    Modifier
+                        .padding(start = 6.dp)
+                        .size(50.dp)
+                        .clip(CircleShape)
+                        .background(Mami.colors.brush)
+                        .clickable {
+                            onSend(text)
+                            text = ""
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White)
+                }
             }
         }
     }
-}
-
-@Composable
-private fun NudgeOverlay(kind: NudgeKind?) {
-    AnimatedVisibility(
-        visible = kind != null,
-        enter = fadeIn() + scaleIn(initialScale = 0.4f),
-        exit = fadeOut(tween(600)) + scaleOut(targetScale = 1.6f),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        val pulse by animateFloatAsState(if (kind != null) 1.1f else 1f, label = "pulse")
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                when (kind) {
-                    NudgeKind.HUG -> "🤗"
-                    NudgeKind.KISS -> "😘"
-                    NudgeKind.MISS_YOU -> "🥺"
-                    else -> "💗"
-                },
-                fontSize = 120.sp,
-                modifier = Modifier.scale(pulse),
-            )
-        }
-    }
-}
-
-/** Exactly when a message was written, reached the server, reached the phone and was seen. */
-@Composable
-private fun MessageDetails(message: MessageEntity, partnerName: String, onDismiss: () -> Unit) {
-    val rows = if (message.fromMe) {
-        listOf(
-            "Written on your phone" to message.sentAtMs,
-            "Reached MaMi" to message.serverAtMs,
-            "Reached $partnerName's phone" to message.deliveredAtMs,
-            "Seen by $partnerName" to message.readAtMs,
-        )
-    } else {
-        listOf(
-            "Written on $partnerName's phone" to message.sentAtMs,
-            "Reached MaMi" to message.sortAtMs,
-            "Arrived on your phone" to message.deliveredAtMs,
-            "You saw it" to message.readAtMs,
-        )
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Message details") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                rows.forEach { (label, at) ->
-                    Column {
-                        Text(label, style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            at?.let(Format::preciseDateTime) ?: "Not yet",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                if (message.fromMe && message.state == MessageState.PENDING) {
-                    Text(
-                        "Still on your phone. It will be sent as soon as there's a connection.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
 }

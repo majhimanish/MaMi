@@ -9,6 +9,7 @@ plugins {
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.roborazzi)
 }
 
 // ---- Configuration -------------------------------------------------------------
@@ -81,6 +82,18 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all { test ->
+                // Screenshot tests call the Rust core through the host build of the library.
+                test.systemProperty("jna.library.path", rootDir.parentFile.resolve("target/debug").absolutePath)
+                test.systemProperty("mami.screenshots", rootDir.parentFile.resolve("docs/screenshots").absolutePath)
+                test.maxHeapSize = "2g"
+            }
+        }
     }
 
     packaging {
@@ -226,6 +239,15 @@ dependencies {
     implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
     testImplementation(libs.junit)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation("net.java.dev.jna:jna:${libs.versions.jna.get()}")
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
 fun readFirebaseConfig(file: File, packageName: String): Map<String, String> {

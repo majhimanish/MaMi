@@ -84,3 +84,10 @@ fun partnerLocalTime(status: DeviceStatus?, now: Long): String? {
     val minutes = Math.floorMod(now / 60_000 + offset, 24L * 60).toInt()
     return localTime(minutes / 60, minutes % 60)
 }
+
+/** The partner's local hour and minute right now, if they share their time. */
+fun partnerLocalHourMinute(status: DeviceStatus?, now: Long): Pair<Int, Int>? {
+    val offset = status?.utcOffsetMinutes ?: return null
+    val minutes = Math.floorMod(now / 60_000 + offset, 24L * 60).toInt()
+    return minutes / 60 to minutes % 60
+}

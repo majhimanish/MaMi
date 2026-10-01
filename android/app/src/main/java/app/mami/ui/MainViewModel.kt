@@ -6,96 +6,131 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.mami.BuildConfig
+import app.mami.AppGraph
 import app.mami.MamiApp
-import app.mami.data.ApiException
-import app.mami.sync.Messenger
-import app.mami.sync.NoSessionException
-import java.io.IOException
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
+import app.mami.demo.DemoBackend
+import app.mami.sync.MamiBackend
+import app.mami.ui.theme.Appearance
+import app.mami.ui.theme.DarkMode
+import app.mami.ui.theme.Palette
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-enum class Stage { SignIn, Profile, Sharing, Pair, Chat }
+/** Screens of the app the debug playground can jump to. */
+enum class Destination(val label: String) {
+    Welcome("Welcome"),
+    Email("Email"),
+    Code("Code"),
+    Profile("Name"),
+    Sharing("Sharing"),
+    Pair("Pairing"),
+    PairWaiting("Invite code"),
+    Chat("Chat"),
+    Partner("Partner sheet"),
+    Settings("Settings"),
+    Safety("Safety code"),
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    val messenger: Messenger = MamiApp.graph(application).messenger
+    val controller = AppController(MamiApp.graph(application), viewModelScope)
+}
 
-    val stage: StateFlow<Stage> = combine(
-        messenger.signedIn,
-        messenger.displayName,
-        messenger.sharingConfirmed,
-        messenger.partner,
-    ) { signedIn, name, sharingConfirmed, partner ->
-        stageFor(signedIn, name, sharingConfirmed, partner != null)
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.Eagerly,
-        stageFor(
-            messenger.signedIn.value,
-            messenger.displayName.value,
-            messenger.sharingConfirmed.value,
-            messenger.partner.value != null,
+/** The app's [UiController]: real or simulated backend, appearance, and the debug playground. */
+class AppController(private val graph: AppGraph, scope: CoroutineScope) : BaseUiController(scope) {
+    private val settings = graph.settings
+    val demo: DemoBackend get() = graph.demo
+
+    var demoMode by mutableStateOf(BuildConfig.DEBUG && settings.demoMode)
+        private set
+
+    override val backend: MamiBackend get() = if (demoMode) graph.demo else graph.messenger
+
+    override val canSkip: Boolean = BuildConfig.DEBUG
+
+    override var appearance by mutableStateOf(
+        Appearance(
+            palette = Palette.entries.firstOrNull { it.name == settings.palette } ?: Palette.ROSE,
+            darkMode = DarkMode.entries.firstOrNull { it.name == settings.darkMode } ?: DarkMode.SYSTEM,
+            chatWallpaper = settings.chatWallpaper,
         ),
     )
-
-    var busy by mutableStateOf(false)
-        private set
-    var error by mutableStateOf<String?>(null)
         private set
 
-    /** Runs a user action, showing progress and a friendly error if it fails. */
-    fun run(action: suspend () -> Unit, onSuccess: () -> Unit = {}) {
-        viewModelScope.launch {
-            busy = true
-            error = null
-            try {
-                action()
-                onSuccess()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = describe(e)
-            } finally {
-                busy = false
+    var playgroundOpen by mutableStateOf(false)
+
+    override fun setAppearance(appearance: Appearance) {
+        this.appearance = appearance
+        settings.palette = appearance.palette.name
+        settings.darkMode = appearance.darkMode.name
+        settings.chatWallpaper = appearance.chatWallpaper
+    }
+
+    fun setDemo(on: Boolean) {
+        if (on && !BuildConfig.DEBUG) return
+        demoMode = on
+        settings.demoMode = on
+        clearError()
+        overlay = Overlay.None
+        partnerSheetOpen = false
+    }
+
+    override fun skip(from: Stage) {
+        if (!BuildConfig.DEBUG) return
+        setDemo(true)
+        when (from) {
+            Stage.SignIn -> demo.skipSignIn()
+            Stage.Profile -> demo.skipProfile()
+            Stage.Sharing -> demo.skipSharing()
+            Stage.Pair -> demo.skipPairing()
+            Stage.Chat -> Unit
+        }
+    }
+
+    /** Debug: show any screen, with the simulated partner providing the data. */
+    fun goTo(destination: Destination) {
+        setDemo(true)
+        val d = demo
+        when (destination) {
+            Destination.Welcome, Destination.Email, Destination.Code -> {
+                d.reset()
+                signInEmail = "you@example.com"
+                signInStep = when (destination) {
+                    Destination.Welcome -> SignInStep.Welcome
+                    Destination.Email -> SignInStep.Email
+                    else -> SignInStep.Code
+                }
+            }
+            Destination.Profile -> {
+                d.reset()
+                d.skipSignIn()
+            }
+            Destination.Sharing -> {
+                d.reset()
+                d.skipProfile()
+            }
+            Destination.Pair -> {
+                d.reset()
+                d.skipSharing()
+            }
+            Destination.PairWaiting -> {
+                d.reset()
+                d.skipSharing()
+                scope.launch { d.createInvite("maya@example.com") }
+            }
+            Destination.Chat -> d.skipPairing()
+            Destination.Partner -> {
+                d.skipPairing()
+                partnerSheetOpen = true
+            }
+            Destination.Settings -> {
+                d.skipPairing()
+                overlay = Overlay.Settings
+            }
+            Destination.Safety -> {
+                d.skipPairing()
+                overlay = Overlay.Safety
             }
         }
-    }
-
-    fun clearError() {
-        error = null
-    }
-
-    private fun stageFor(signedIn: Boolean, name: String, sharingConfirmed: Boolean, paired: Boolean) = when {
-        !signedIn -> Stage.SignIn
-        name.isBlank() -> Stage.Profile
-        !sharingConfirmed -> Stage.Sharing
-        !paired -> Stage.Pair
-        else -> Stage.Chat
-    }
-
-    private fun describe(e: Exception): String = when (e) {
-        is ApiException -> when (e.code) {
-            "wrong_code" -> "That code isn't right. Check the email and try again."
-            "too_many_requests" -> "Too many tries. Please wait a minute and try again."
-            "bad_email" -> "That doesn't look like an email address."
-            "own_email" -> "Enter your partner's email address, not yours."
-            "email_failed" -> "We couldn't send the email. Please try again."
-            "invite_not_found" -> "There's no invite with that code. Check it and try again."
-            "invite_expired" -> "That invite has expired. Ask your partner for a new one."
-            "invite_for_someone_else" -> "This invite was made for a different email address."
-            "own_invite" -> "That's your own invite. Your partner needs to enter it on their phone."
-            "already_paired" -> "One of you is already linked with someone."
-            "not_paired" -> "You're not linked with a partner."
-            "name_too_long" -> "Please use a shorter name (40 characters at most)."
-            "bad_server_address" -> "The server address isn't valid."
-            "unauthorized" -> "Please sign in again."
-            else -> "Something went wrong (${e.code}). Please try again."
-        }
-        is NoSessionException -> "The secure connection with your partner isn't ready yet."
-        is IOException -> "Can't reach MaMi. Check your internet connection."
-        else -> e.message ?: "Something went wrong."
     }
 }
