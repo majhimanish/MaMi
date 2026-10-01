@@ -19,6 +19,8 @@ class DeviceWatcher(
     private val context: Context,
     private val onDeviceChanged: () -> Unit,
     private val onNetworkAvailable: () -> Unit,
+    private val onScreenOff: () -> Unit = {},
+    private val onUnlocked: () -> Unit = {},
 ) {
     fun start() {
         val filter = IntentFilter().apply {
@@ -34,6 +36,23 @@ class DeviceWatcher(
                 override fun onReceive(context: Context, intent: Intent) = onDeviceChanged()
             },
             filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        // Screen off and unlock, to notice waking up in the morning.
+        ContextCompat.registerReceiver(
+            context,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    when (intent.action) {
+                        Intent.ACTION_SCREEN_OFF -> onScreenOff()
+                        Intent.ACTION_USER_PRESENT -> onUnlocked()
+                    }
+                }
+            },
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         context.getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(

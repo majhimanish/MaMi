@@ -28,7 +28,7 @@ class MamiApp : Application() {
                 override fun onStop(owner: LifecycleOwner) = messenger.onBackground()
             },
         )
-        DeviceWatcher(this, messenger::onDeviceChanged, messenger::onNetworkAvailable).start()
+        DeviceWatcher(this, messenger::onDeviceChanged, messenger::onNetworkAvailable, messenger::onScreenOff, messenger::onUnlocked).start()
         StatusWorker.schedule(this)
     }
 

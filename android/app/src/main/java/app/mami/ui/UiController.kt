@@ -16,7 +16,7 @@ enum class Stage { SignIn, Profile, Sharing, Pair, Chat }
 
 enum class SignInStep { Welcome, Email, Code }
 
-enum class Overlay { None, Settings, Safety, Media, Starred }
+enum class Overlay { None, Settings, Safety, Media, Starred, Together }
 
 /** What every screen needs: the backend, navigation state and a way to run actions. */
 interface UiController {
@@ -33,6 +33,13 @@ interface UiController {
 
     /** A message the chat should scroll to and flash (from search, media, starred). */
     var jumpTo: String?
+
+    /** The love letter being read, by message id. */
+    var reading: String?
+    var writingLetter: Boolean
+
+    /** The live location sheet is open. */
+    var locationOpen: Boolean
     val appearance: Appearance
 
     fun changeAppearance(appearance: Appearance)
@@ -56,6 +63,9 @@ abstract class BaseUiController(protected val scope: CoroutineScope) : UiControl
     override var overlay by mutableStateOf(Overlay.None)
     override var partnerSheetOpen by mutableStateOf(false)
     override var jumpTo by mutableStateOf<String?>(null)
+    override var reading by mutableStateOf<String?>(null)
+    override var writingLetter by mutableStateOf(false)
+    override var locationOpen by mutableStateOf(false)
 
     override fun run(action: suspend () -> Unit, onSuccess: () -> Unit) {
         scope.launch {

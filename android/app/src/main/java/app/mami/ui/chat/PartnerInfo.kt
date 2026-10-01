@@ -11,6 +11,8 @@ import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.EmojiEmotions
+import androidx.compose.material.icons.filled.PauseCircle
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.mami.core.DeviceStatus
 import app.mami.core.Insight
@@ -21,6 +23,7 @@ import app.mami.core.ShareKind
 import app.mami.core.partnerInsights
 import app.mami.core.visibleStatus
 import app.mami.data.PresenceDto
+import app.mami.data.pausedIndefinitely
 import app.mami.ui.Format
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -41,9 +44,18 @@ fun partnerHints(status: DeviceStatus?, presence: PresenceDto?, name: String, no
 
 private fun hint(insight: Insight, name: String, now: Long): Hint = when (insight) {
     is Insight.OnlineNow -> Hint(Icons.Filled.Circle, "Online now")
+    is Insight.SharingPaused -> Hint(
+        Icons.Filled.PauseCircle,
+        "Paused sharing" + (insight.untilMs?.takeIf { !pausedIndefinitely(it) }?.let { " until ${Format.time(it)}" } ?: " for now"),
+    )
+    is Insight.WokeUp -> Hint(Icons.Filled.WbSunny, "Woke up ${Format.relative(insight.atMs, now)}")
     is Insight.Busy -> Hint(
         Icons.Filled.EmojiEmotions,
-        "${insight.emoji} ${insight.label}" + (insight.untilMs?.let { " until ${Format.time(it)}" } ?: ""),
+        "${insight.emoji} ${insight.label}" + when {
+            insight.automatic -> " (automatic)"
+            insight.untilMs != null -> " until ${Format.time(insight.untilMs!!)}"
+            else -> ""
+        },
     )
     is Insight.PhoneMayHaveDied -> Hint(
         Icons.Filled.PowerSettingsNew,

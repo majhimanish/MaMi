@@ -166,6 +166,8 @@ fun snippet(message: MessageEntity, partnerName: String): String = when {
     message.kind == MessageKind.NUDGE -> "${nudgeEmoji(message.body)} ${nudgeWords(message.body)}"
     message.kind == MessageKind.ALERT -> "🔋 Battery alert"
     message.kind == MessageKind.CALL -> callLabel(message)
+    message.kind == MessageKind.LETTER || message.kind == MessageKind.CHECKIN || message.kind == MessageKind.LIVE_LOCATION ->
+        Notifications.preview(message, partnerName)
     else -> message.body
 }
 

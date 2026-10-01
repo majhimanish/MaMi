@@ -1,17 +1,27 @@
 package app.mami
 
 import android.app.Application
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.mami.calls.CallPhase
+import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
 import app.mami.data.db.MessageState
-import app.mami.data.db.MediaType
 import app.mami.demo.DemoBackend
 import app.mami.media.MediaLibrary
 import app.mami.ui.AppController
@@ -20,7 +30,6 @@ import app.mami.ui.MamiScreens
 import app.mami.ui.Overlay
 import app.mami.ui.PreviewController
 import app.mami.ui.SignInStep
-import app.mami.calls.CallPhase
 import app.mami.ui.call.CallOverlay
 import app.mami.ui.chat.MediaViewer
 import app.mami.ui.chat.MessageActionsSheet
@@ -34,14 +43,25 @@ import app.mami.ui.theme.Appearance
 import app.mami.ui.theme.DarkMode
 import app.mami.ui.theme.MamiTheme
 import app.mami.ui.theme.Palette
+import app.mami.ui.together.LetterComposer
+import app.mami.ui.together.LetterReader
+import app.mami.ui.together.LettersCard
+import app.mami.ui.together.LocationSheet
+import app.mami.ui.together.MoodCard
+import app.mami.ui.together.PauseCard
+import app.mami.ui.together.QuestionCard
+import app.mami.ui.together.SafeCard
+import app.mami.ui.together.ScheduleSheet
+import app.mami.ui.together.ScheduledCard
 import com.github.takahirom.roborazzi.captureScreenRoboImage
-import kotlinx.coroutines.MainScope
-import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.time.ZoneId
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.runBlocking
 
 /**
  * Renders every screen with the simulated partner and saves PNGs to
@@ -216,6 +236,117 @@ class ScreenshotTest {
     @Test fun chatCalls() = shot("28-chat-calls", setup = {
         skipPairing()
         showcaseCalls()
+    })
+
+    @Test fun together() = shot("29-together", setup = { ui ->
+        skipPairing()
+        showcaseTogether()
+        ui.overlay = Overlay.Together
+    })
+
+    @Test fun togetherMoods() = shot("30-together-question-mood", setup = {
+        skipPairing()
+        showcaseTogether()
+    }) { ui ->
+        val now = System.currentTimeMillis()
+        val answers by ui.backend.answers.collectAsState(initial = emptyList())
+        val moods by ui.backend.moods.collectAsState(initial = emptyList())
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                QuestionCard(answers, "Maya", now, onAnswer = {})
+                MoodCard(moods, "Maya", now, onMood = { _, _ -> })
+            }
+        }
+    }
+
+    @Test fun togetherMore() = shot("31-together-more", setup = {
+        skipPairing()
+        showcaseTogether()
+        pauseSharing(System.currentTimeMillis() + 2 * 60 * 60_000L)
+    }) { ui ->
+        val now = System.currentTimeMillis()
+        val messages by ui.backend.messages.collectAsState(initial = emptyList())
+        val location by ui.backend.partnerLocation.collectAsState()
+        val paused by ui.backend.sharingPausedUntil.collectAsState()
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                LettersCard(messages.filter { it.kind == MessageKind.LETTER }.asReversed(), "Maya", now, onWrite = {}, onOpen = {})
+                SafeCard("Maya", location, null, now, onCheckIn = {}, onLocation = {})
+                ScheduledCard(messages.filter { it.fromMe && it.hiddenUntil(now) }, "Maya", ZoneId.of("Asia/Kathmandu"), now, onCancel = {})
+                PauseCard(paused, "Maya", now, onPause = {})
+            }
+        }
+    }
+
+    @Test fun chatTogether() = shot("32-chat-together", setup = {
+        skipPairing()
+        clearChat()
+        showcaseTogether()
+        partnerMood()
+        partnerDriving(true)
+    })
+
+    @Test fun letter() = shot("33-letter", setup = { skipPairing() }) {
+        val now = System.currentTimeMillis()
+        LetterReader(
+            MessageEntity(
+                id = "l", fromMe = false, kind = MessageKind.LETTER, sentAtMs = now - 3_600_000, sortAtMs = now - 3_600_000,
+                state = MessageState.DELIVERED, title = "For my favourite person", paper = "cream",
+                body = "My love,\n\nI know the distance is hard some days. But every morning I wake up and the first thing I think is " +
+                    "that you exist, somewhere, thinking of me too.\n\nCount down the days with me.\n\nForever yours,\nMaya",
+            ),
+            "Maya",
+            now,
+            onOpened = {},
+            onDismiss = {},
+        )
+    }
+
+    @Test fun letterSealed() = shot("34-letter-sealed", setup = { skipPairing() }) {
+        val now = System.currentTimeMillis()
+        LetterReader(
+            MessageEntity(
+                id = "l", fromMe = false, kind = MessageKind.LETTER, body = "…", sentAtMs = now, sortAtMs = now,
+                state = MessageState.DELIVERED, title = "Open on our anniversary", paper = "rose", unlockAtMs = now + 2 * 24 * 3_600_000L + 3 * 3_600_000L,
+            ),
+            "Maya",
+            now,
+            onOpened = {},
+            onDismiss = {},
+        )
+    }
+
+    @Test fun letterComposer() = shot("35-letter-write", setup = { skipPairing() }) {
+        LetterComposer("Maya", System.currentTimeMillis(), onDismiss = {}) { _, _, _, _ -> }
+    }
+
+    @Test fun schedule() = shot("36-schedule", setup = { skipPairing() }) {
+        ScheduleSheet(
+            text = "Good morning, beautiful ☀️ Have the best first day at the new job!",
+            partnerName = "Maya",
+            partnerZone = ZoneId.of("Asia/Kathmandu"),
+            now = System.currentTimeMillis(),
+            onDismiss = {},
+            onSchedule = {},
+        )
+    }
+
+    @Test fun location() = shot("37-location", setup = {
+        skipPairing()
+        partnerSharesLocation(moving = false)
+    }) { ui -> LocationSheet(ui.backend, "Maya", onDismiss = {}) }
+
+    @Test fun partnerPaused() = shot("38-partner-paused", setup = { ui ->
+        skipPairing()
+        partnerPausesSharing(true)
+        partnerWokeUp()
+        ui.partnerSheetOpen = true
     })
 
     @Test fun playground() {

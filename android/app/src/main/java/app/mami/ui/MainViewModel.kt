@@ -30,6 +30,7 @@ enum class Destination(val label: String) {
     Partner("Partner sheet"),
     Settings("Settings"),
     Safety("Safety code"),
+    Together("Together"),
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -130,6 +131,10 @@ class AppController(private val graph: AppGraph, scope: CoroutineScope) : BaseUi
             Destination.Safety -> {
                 d.skipPairing()
                 overlay = Overlay.Safety
+            }
+            Destination.Together -> {
+                d.skipPairing()
+                overlay = Overlay.Together
             }
         }
     }

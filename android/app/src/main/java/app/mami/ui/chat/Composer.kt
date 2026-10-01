@@ -64,9 +64,13 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -111,6 +115,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import app.mami.core.CheckInKind
 import app.mami.core.LinkPreview
 import app.mami.core.NudgeKind
 import app.mami.core.extractLinks
@@ -119,8 +124,12 @@ import app.mami.media.VoiceRecorder
 import app.mami.sync.Notifications
 import app.mami.ui.Files
 import app.mami.ui.UiController
+import app.mami.ui.Overlay
 import app.mami.ui.theme.Mami
+import app.mami.ui.together.ScheduleSheet
+import app.mami.ui.together.whenIn
 import java.io.File
+import java.time.ZoneId
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -166,13 +175,14 @@ private val nudges = listOf(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Composer(ui: UiController, state: ComposerState, partnerName: String, onNudge: (NudgeKind) -> Unit) {
+fun Composer(ui: UiController, state: ComposerState, partnerName: String, partnerZone: ZoneId?, onNudge: (NudgeKind) -> Unit) {
     val backend = ui.backend
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     var nudgeMenu by remember { mutableStateOf(false) }
     var attachMenu by remember { mutableStateOf(false) }
+    var scheduling by remember { mutableStateOf(false) }
     var picked by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var captureFile by remember { mutableStateOf<File?>(null) }
     var captureVideo by remember { mutableStateOf(false) }
@@ -226,14 +236,14 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, onNudg
         }
     }
 
-    fun send() {
+    fun send(deliverAt: Long? = null) {
         val text = state.text.trim()
         val editing = state.editing
         when {
             editing != null -> if (text.isNotEmpty() && text != editing.body) backend.edit(editing.id, text)
             text.isNotEmpty() -> {
                 val link = state.preview?.takeIf { p -> text.contains(p.url) }
-                backend.sendText(text, state.replyTo?.id, link)
+                backend.sendText(text, state.replyTo?.id, link, deliverAt)
             }
         }
         state.clear()
@@ -305,6 +315,12 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, onNudg
                                         IconButton(onClick = { camera(video = false) }) { Icon(Icons.Filled.PhotoCamera, contentDescription = "Camera") }
                                     }
                                 }
+                            } else if (state.editing == null) {
+                                @Composable {
+                                    IconButton(onClick = { scheduling = true }) {
+                                        Icon(Icons.Filled.Schedule, contentDescription = "Schedule", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
                             } else {
                                 null
                             }
@@ -335,7 +351,21 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, onNudg
                 AnimatedContent(canSend, transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) }, label = "send") { sendable ->
                     if (sendable) {
                         Box(
-                            Modifier.size(50.dp).clip(CircleShape).background(Mami.colors.brush).clickable { send() },
+                            Modifier
+                                .size(50.dp)
+                                .clip(CircleShape)
+                                .background(Mami.colors.brush)
+                                .combinedClickable(
+                                    onClick = { send() },
+                                    onLongClick = if (state.editing == null) {
+                                        {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            scheduling = true
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                ),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = if (state.editing != null) "Save" else "Send", tint = Color.White)
@@ -386,6 +416,28 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, onNudg
             onCamera = { camera(video = false) },
             onVideo = { camera(video = true) },
             onDocument = { pickDocument.launch(arrayOf("*/*")) },
+            onLetter = { ui.writingLetter = true },
+            onLocation = { ui.locationOpen = true },
+            onHomeSafe = {
+                backend.checkIn(CheckInKind.HOME_SAFE)
+                Toast.makeText(context, "Told $partnerName you're home safe", Toast.LENGTH_SHORT).show()
+            },
+            onSchedule = { ui.overlay = Overlay.Together },
+        )
+    }
+    if (scheduling) {
+        val now = System.currentTimeMillis()
+        ScheduleSheet(
+            text = state.text.trim(),
+            partnerName = partnerName,
+            partnerZone = partnerZone,
+            now = now,
+            onDismiss = { scheduling = false },
+            onSchedule = { at ->
+                scheduling = false
+                send(deliverAt = at)
+                Toast.makeText(context, "Scheduled for ${whenIn(at, partnerZone ?: ZoneId.systemDefault(), now)}" + if (partnerZone != null) " their time" else "", Toast.LENGTH_SHORT).show()
+            },
         )
     }
     if (picked.isNotEmpty()) {
@@ -512,23 +564,39 @@ private fun ContextBar(icon: ImageVector, title: String, text: String, onClose: 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AttachSheet(onDismiss: () -> Unit, onGallery: () -> Unit, onCamera: () -> Unit, onVideo: () -> Unit, onDocument: () -> Unit) {
+private fun AttachSheet(
+    onDismiss: () -> Unit,
+    onGallery: () -> Unit,
+    onCamera: () -> Unit,
+    onVideo: () -> Unit,
+    onDocument: () -> Unit,
+    onLetter: () -> Unit,
+    onLocation: () -> Unit,
+    onHomeSafe: () -> Unit,
+    onSchedule: () -> Unit,
+) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Row(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-        ) {
-            AttachOption(Icons.Filled.PhotoLibrary, "Gallery") { onDismiss(); onGallery() }
-            AttachOption(Icons.Filled.PhotoCamera, "Camera") { onDismiss(); onCamera() }
-            AttachOption(Icons.Filled.Videocam, "Video") { onDismiss(); onVideo() }
-            AttachOption(Icons.AutoMirrored.Filled.InsertDriveFile, "Document") { onDismiss(); onDocument() }
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                AttachOption(Icons.Filled.PhotoLibrary, "Gallery") { onDismiss(); onGallery() }
+                AttachOption(Icons.Filled.PhotoCamera, "Camera") { onDismiss(); onCamera() }
+                AttachOption(Icons.Filled.Videocam, "Video") { onDismiss(); onVideo() }
+                AttachOption(Icons.AutoMirrored.Filled.InsertDriveFile, "Document") { onDismiss(); onDocument() }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                AttachOption(Icons.Filled.MailOutline, "Letter") { onDismiss(); onLetter() }
+                AttachOption(Icons.Filled.LocationOn, "Location") { onDismiss(); onLocation() }
+                AttachOption(Icons.Filled.Home, "Home safe") { onDismiss(); onHomeSafe() }
+                AttachOption(Icons.Filled.Schedule, "Scheduled") { onDismiss(); onSchedule() }
+            }
         }
     }
 }
 
 @Composable
 private fun AttachOption(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Column(Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.width(82.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(60.dp).clip(CircleShape).background(Mami.colors.brush), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
         }

@@ -108,7 +108,6 @@ fun SharedMediaScreen(ui: UiController, partnerName: String, onBack: () -> Unit,
             (if (m.linkUrl != null && found.none { it == m.linkUrl }) listOf(m.linkUrl!!) + found else found).map { SharedLink(m, it) }
         }
     }
-    val counts = mapOf(Shelf.PHOTOS to photos.size, Shelf.VIDEOS to videos.size, Shelf.VOICE to voice.size, Shelf.LINKS to links.size, Shelf.FILES to files.size)
     val pager = rememberPagerState { Shelf.entries.size }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -140,7 +139,7 @@ fun SharedMediaScreen(ui: UiController, partnerName: String, onBack: () -> Unit,
                         Tab(
                             selected = pager.currentPage == index,
                             onClick = { scope.launch { pager.animateScrollToPage(index) } },
-                            text = { Text("${shelf.title} ${counts[shelf] ?: 0}") },
+                            text = { Text(shelf.title) },
                         )
                     }
                 }

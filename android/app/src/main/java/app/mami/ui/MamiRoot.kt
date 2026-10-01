@@ -41,6 +41,10 @@ import app.mami.ui.onboarding.SignInFlow
 import app.mami.ui.pairing.PairScreen
 import app.mami.ui.settings.SafetyScreen
 import app.mami.ui.settings.SettingsScreen
+import app.mami.ui.together.LetterComposer
+import app.mami.ui.together.LetterReader
+import app.mami.ui.together.LocationSheet
+import app.mami.ui.together.TogetherScreen
 import app.mami.ui.theme.Mami
 import app.mami.ui.theme.MamiTheme
 
@@ -129,7 +133,26 @@ private fun PairedScreens(ui: UiController) {
                 onShowInChat = showInChat,
             )
             Overlay.Starred -> StarredScreen(ui, partnerName, onBack = { ui.overlay = Overlay.None }, onShowInChat = showInChat)
+            Overlay.Together -> TogetherScreen(ui, partnerName, onBack = { ui.overlay = Overlay.None })
         }
+    }
+    ui.reading?.let { id -> messages.firstOrNull { it.id == id } }?.let { letter ->
+        LetterReader(
+            letter,
+            partnerName,
+            now = System.currentTimeMillis(),
+            onOpened = { ui.backend.openLetter(letter.id) },
+            onDismiss = { ui.reading = null },
+        )
+    }
+    if (ui.writingLetter) {
+        LetterComposer(partnerName, System.currentTimeMillis(), onDismiss = { ui.writingLetter = false }) { title, body, paper, openAt ->
+            ui.backend.sendLetter(title, body, paper, openAt)
+            ui.writingLetter = false
+        }
+    }
+    if (ui.locationOpen) {
+        LocationSheet(ui.backend, partnerName, onDismiss = { ui.locationOpen = false })
     }
     viewing?.let { start ->
         MediaViewer(

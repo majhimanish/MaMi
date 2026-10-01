@@ -51,6 +51,13 @@ class Notifications(private val context: Context) {
                     description = "Shown while you're on a call"
                     setSound(null, null)
                 },
+                NotificationChannel(CHANNEL_TOGETHER, "Together", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "Daily question answers and moods"
+                },
+                NotificationChannel(CHANNEL_LOCATION, "Sharing location", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Shown while you share your live location"
+                    setSound(null, null)
+                },
             ),
         )
     }
@@ -174,6 +181,21 @@ class Notifications(private val context: Context) {
 
     fun clearConversation() = manager.cancel(ID_CONVERSATION)
 
+    /** The partner answered today's question or checked in a mood. */
+    @SuppressLint("MissingPermission") // checked by allowed()
+    fun showTogether(title: String, text: String) {
+        if (!allowed()) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_TOGETHER)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(ContextCompat.getColor(context, R.color.brand))
+            .setContentTitle(title)
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setContentIntent(openApp())
+            .build()
+        manager.notify(ID_TOGETHER, notification)
+    }
+
     fun clearAll() = manager.cancelAll()
 
     private fun allowed(): Boolean =
@@ -193,17 +215,30 @@ class Notifications(private val context: Context) {
         const val CHANNEL_ALERTS = "alerts"
         const val CHANNEL_CALLS = "calls"
         const val CHANNEL_ONGOING_CALL = "ongoing_call"
+        const val CHANNEL_TOGETHER = "together"
+        const val CHANNEL_LOCATION = "location"
         private const val ID_CONVERSATION = 1
         private const val ID_INCOMING_CALL = 2
         private const val ID_MISSED_CALL = 3
         const val ID_ONGOING_CALL = 4
+        const val ID_LOCATION = 5
+        private const val ID_TOGETHER = 6
 
         fun preview(message: MessageEntity, partnerName: String): String = when (message.kind) {
             MessageKind.NUDGE -> nudgeText(message.body)
             MessageKind.ALERT -> "🔋 ${partnerName.ifBlank { "Your partner" }}'s phone is at ${message.batteryPercent ?: "a few"}% and may switch off soon"
             MessageKind.MEDIA -> mediaLabel(message) + message.body.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
             MessageKind.CALL -> if (message.mediaKind == MediaType.VIDEO) "📹 Missed video call" else "📞 Missed voice call"
+            MessageKind.LETTER -> "💌 A love letter" + (message.title?.let { " · $it" }.orEmpty())
+            MessageKind.CHECKIN -> checkInText(message.body)
+            MessageKind.LIVE_LOCATION -> "📍 Sharing live location"
             else -> message.body
+        }
+
+        fun checkInText(kind: String): String = when (kind) {
+            "LEAVING" -> "🚶 Leaving now"
+            "ARRIVED" -> "📍 Arrived"
+            else -> "🏠 Home safe"
         }
 
         /** "📷 Photo", "🎤 Voice message (0:12)" and so on. */

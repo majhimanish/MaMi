@@ -18,6 +18,40 @@ import kotlinx.serialization.json.Json
 @Serializable
 data class SavedQuickStatus(val emoji: String, val label: String, val untilMs: Long? = null)
 
+/**
+ * What the two of you share: the day you got together and the next time
+ * you'll meet. Each value remembers when it was set; the newest wins.
+ */
+@Serializable
+data class TogetherInfo(
+    /** "yyyy-mm-dd". */
+    val since: String? = null,
+    val sinceAt: Long = 0,
+    val nextMeetingMs: Long? = null,
+    val nextMeetingAt: Long = 0,
+    val nextMeetingLabel: String? = null,
+    val nextMeetingLabelAt: Long = 0,
+)
+
+/** Sharing is paused until turned back on. */
+const val PAUSED_INDEFINITELY = Long.MAX_VALUE
+
+fun pausedIndefinitely(until: Long): Boolean = until >= PAUSED_INDEFINITELY / 2
+
+/** The partner's live location, as last received. */
+@Serializable
+data class SharedLocation(
+    val lat: Double,
+    val lng: Double,
+    val accuracyM: Float? = null,
+    val speedMps: Float? = null,
+    val atMs: Long,
+    val untilMs: Long,
+    val ended: Boolean = false,
+) {
+    fun live(now: Long) = !ended && untilMs > now
+}
+
 /** Small, non-sensitive preferences plus a few Keystore-protected secrets. */
 class Settings(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("mami", Context.MODE_PRIVATE)
@@ -28,6 +62,84 @@ class Settings(context: Context) {
 
     private val _quickStatus = MutableStateFlow(readQuickStatus())
     val quickStatusFlow: StateFlow<SavedQuickStatus?> = _quickStatus.asStateFlow()
+
+    private val _together = MutableStateFlow(read("together") ?: TogetherInfo())
+    val togetherFlow: StateFlow<TogetherInfo> = _together.asStateFlow()
+
+    private val _pausedUntil = MutableStateFlow(prefs.getLong("paused_until", 0).takeIf { it > 0 })
+    /** Sharing is paused until then (null: not paused). */
+    val pausedUntilFlow: StateFlow<Long?> = _pausedUntil.asStateFlow()
+
+    private val _partnerLocation = MutableStateFlow(read<SharedLocation>("partner_location"))
+    val partnerLocationFlow: StateFlow<SharedLocation?> = _partnerLocation.asStateFlow()
+
+    private val _locationUntil = MutableStateFlow(prefs.getLong("location_until", 0).takeIf { it > 0 })
+    /** I'm sharing my live location until then. */
+    val locationUntilFlow: StateFlow<Long?> = _locationUntil.asStateFlow()
+
+    var together: TogetherInfo
+        get() = _together.value
+        set(value) {
+            _together.value = value
+            prefs.edit { putString("together", json.encodeToString(value)) }
+        }
+
+    var sharingPausedUntil: Long?
+        get() = _pausedUntil.value
+        set(value) {
+            _pausedUntil.value = value
+            prefs.edit { putLong("paused_until", value ?: 0) }
+        }
+
+    var partnerLocation: SharedLocation?
+        get() = _partnerLocation.value
+        set(value) {
+            _partnerLocation.value = value
+            prefs.edit { if (value == null) remove("partner_location") else putString("partner_location", json.encodeToString(value)) }
+        }
+
+    /** My live location share: its chat message id and when it ends. */
+    var locationShareId: String?
+        get() = prefs.getString("location_share_id", null)
+        set(value) = prefs.edit { putString("location_share_id", value) }
+
+    var locationShareUntil: Long?
+        get() = _locationUntil.value
+        set(value) {
+            _locationUntil.value = value
+            prefs.edit { putLong("location_until", value ?: 0) }
+        }
+
+    /** Let the partner see "🚗 Driving" automatically. */
+    var autoDriving: Boolean
+        get() = prefs.getBoolean("auto_driving", false)
+        set(value) = prefs.edit { putBoolean("auto_driving", value) }
+
+    /** Let the partner see "Woke up at 7:12" automatically. */
+    var autoWakeUp: Boolean
+        get() = prefs.getBoolean("auto_wake_up", false)
+        set(value) = prefs.edit { putBoolean("auto_wake_up", value) }
+
+    /** The status the phone set by itself (driving), if any. */
+    var autoStatus: SavedQuickStatus?
+        get() = read("auto_status")
+        set(value) = prefs.edit { if (value == null) remove("auto_status") else putString("auto_status", json.encodeToString(value)) }
+
+    var wokeAtMs: Long
+        get() = prefs.getLong("woke_at", 0)
+        set(value) = prefs.edit { putLong("woke_at", value) }
+
+    var lastScreenOffAt: Long
+        get() = prefs.getLong("screen_off_at", 0)
+        set(value) = prefs.edit { putLong("screen_off_at", value) }
+
+    /** When the background check first saw the phone idle (0: it wasn't). */
+    var idleSince: Long
+        get() = prefs.getLong("idle_since", 0)
+        set(value) = prefs.edit { putLong("idle_since", value) }
+
+    private inline fun <reified T> read(key: String): T? =
+        prefs.getString(key, null)?.let { runCatching { json.decodeFromString<T>(it) }.getOrNull() }
 
     var serverUrl: String
         get() = prefs.getString(KEY_SERVER, null)?.takeIf { it.isNotBlank() } ?: BuildConfig.DEFAULT_SERVER_URL
@@ -137,6 +249,13 @@ class Settings(context: Context) {
     }
 
     fun clearPartner() = prefs.edit {
+        _together.value = TogetherInfo()
+        _partnerLocation.value = null
+        _locationUntil.value = null
+        remove("together")
+        remove("partner_location")
+        remove("location_until")
+        remove("location_share_id")
         remove("partner")
         remove("partner_status")
         remove("partner_status_at")
@@ -179,6 +298,10 @@ class Settings(context: Context) {
         }
         _shares.value = readShares()
         _quickStatus.value = null
+        _together.value = TogetherInfo()
+        _pausedUntil.value = null
+        _partnerLocation.value = null
+        _locationUntil.value = null
     }
 
     private fun readShares(): Set<ShareKind> {

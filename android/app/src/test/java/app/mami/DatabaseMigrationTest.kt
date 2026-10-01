@@ -5,7 +5,9 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MamiDatabase
+import app.mami.data.db.MoodEntity
 import app.mami.data.db.MessageKind
 import app.mami.data.db.OutboxEntity
 import app.mami.data.db.Transfer
@@ -43,7 +45,7 @@ class DatabaseMigrationTest {
         }
 
         val db = Room.databaseBuilder(context, MamiDatabase::class.java, name)
-            .addMigrations(MamiDatabase.MIGRATION_1_2)
+            .addMigrations(MamiDatabase.MIGRATION_1_2, MamiDatabase.MIGRATION_2_3)
             .allowMainThreadQueries()
             .build()
         runBlocking {
@@ -61,6 +63,12 @@ class DatabaseMigrationTest {
             assertEquals(1, db.messages().search("%from v1%").size)
             db.outbox().add(OutboxEntity("o1", "{}", 1))
             assertEquals(1, db.outbox().all().size)
+
+            // Version 3: answers, moods and scheduled messages.
+            db.together().putAnswer(AnswerEntity(day = 20_000, questionId = "q001", mine = "You", mineAtMs = 5))
+            assertEquals("You", db.together().answer(20_000)?.mine)
+            db.together().addMood(MoodEntity("m1", fromMe = true, mood = "😌", atMs = 6))
+            assertNull(db.messages().nextScheduled(0))
         }
         db.close()
         context.deleteDatabase(name)

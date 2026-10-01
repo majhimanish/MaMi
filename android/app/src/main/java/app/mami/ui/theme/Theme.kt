@@ -101,6 +101,9 @@ val Fredoka = FontFamily(
     Font(R.font.fredoka_bold, FontWeight.Bold),
 )
 
+/** Handwriting, for love letters. */
+val Caveat = FontFamily(Font(R.font.caveat_semibold, FontWeight.SemiBold))
+
 private val MamiTypography = Typography().let { base ->
     fun TextStyle.body() = copy(fontFamily = Nunito)
     fun TextStyle.display(weight: FontWeight = FontWeight.SemiBold) = copy(fontFamily = Fredoka, fontWeight = weight)

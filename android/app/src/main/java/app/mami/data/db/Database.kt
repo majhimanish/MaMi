@@ -33,6 +33,12 @@ object MessageKind {
     const val MEDIA = "media"
     /** A call, shown in the chat afterwards. */
     const val CALL = "call"
+    /** A love letter: [MessageEntity.title], the letter in `body`, the paper in [MessageEntity.paper]. */
+    const val LETTER = "letter"
+    /** "Home safe" and friends; the [app.mami.core.CheckInKind] name in `body`. */
+    const val CHECKIN = "checkin"
+    /** Live location being shared until [MessageEntity.untilMs]. */
+    const val LIVE_LOCATION = "live_location"
 }
 
 /** Where an attachment's bytes are. */
@@ -121,9 +127,47 @@ data class MessageEntity(
     @ColumnInfo(defaultValue = "0") val starred: Boolean = false,
     /** Call messages: "VOICE"/"VIDEO" in [mediaKind], outcome here, length in [mediaDurationMs]. */
     val callOutcome: String? = null,
+
+    // ---- together ----
+    /** A scheduled message: hidden until then (on both phones). */
+    val scheduledAtMs: Long? = null,
+    /** A letter's title. */
+    val title: String? = null,
+    /** A letter's paper. */
+    val paper: String? = null,
+    /** A letter sealed until then. */
+    val unlockAtMs: Long? = null,
+    /** Live location: shared until then. */
+    val untilMs: Long? = null,
+    /** Live location: stopped early at. */
+    val endedAtMs: Long? = null,
 ) {
     val isMedia: Boolean get() = kind == MessageKind.MEDIA
+
+    /** Scheduled for later and not shown yet. */
+    fun hiddenUntil(now: Long): Boolean = scheduledAtMs != null && scheduledAtMs > now
 }
+
+/** One day's question and both answers. */
+@Entity(tableName = "answers")
+data class AnswerEntity(
+    @PrimaryKey val day: Long,
+    val questionId: String,
+    val mine: String? = null,
+    val mineAtMs: Long? = null,
+    val theirs: String? = null,
+    val theirsAtMs: Long? = null,
+)
+
+/** A mood check-in, mine or theirs. */
+@Entity(tableName = "moods")
+data class MoodEntity(
+    @PrimaryKey val id: String,
+    val fromMe: Boolean,
+    val mood: String,
+    val note: String? = null,
+    val atMs: Long,
+)
 
 /**
  * Small encrypted payloads that must reach the partner but aren't messages
@@ -155,7 +199,10 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE fromMe = 1 AND state = 0 ORDER BY sortAtMs ASC")
     suspend fun pendingOutgoing(): List<MessageEntity>
 
-    @Query("UPDATE messages SET state = 1, serverAtMs = :atMs, sortAtMs = :atMs WHERE id = :id AND fromMe = 1 AND state = 0")
+    @Query(
+        "UPDATE messages SET state = 1, serverAtMs = :atMs, sortAtMs = COALESCE(scheduledAtMs, :atMs) " +
+            "WHERE id = :id AND fromMe = 1 AND state = 0",
+    )
     suspend fun markSent(id: String, atMs: Long)
 
     @Query(
@@ -174,7 +221,8 @@ interface MessageDao {
     @Query("UPDATE messages SET state = 0 WHERE fromMe = 1 AND state = 1")
     suspend fun requeueUndelivered(): Int
 
-    @Query("UPDATE messages SET readAtMs = :atMs WHERE fromMe = 0 AND readAtMs IS NULL")
+    /** Everything that has arrived and is showing counts as read (scheduled ones wait for their time). */
+    @Query("UPDATE messages SET readAtMs = :atMs WHERE fromMe = 0 AND readAtMs IS NULL AND (scheduledAtMs IS NULL OR scheduledAtMs <= :atMs)")
     suspend fun markIncomingRead(atMs: Long): Int
 
     @Query("SELECT id FROM messages WHERE fromMe = 0 AND readAtMs IS NOT NULL AND readReceiptSent = 0")
@@ -183,8 +231,21 @@ interface MessageDao {
     @Query("UPDATE messages SET readReceiptSent = 1 WHERE id IN (:ids)")
     suspend fun markReadReceiptsSent(ids: List<String>)
 
-    @Query("SELECT * FROM messages WHERE fromMe = 0 AND readAtMs IS NULL ORDER BY sortAtMs DESC LIMIT :limit")
-    suspend fun unreadIncoming(limit: Int): List<MessageEntity>
+    @Query(
+        "SELECT * FROM messages WHERE fromMe = 0 AND readAtMs IS NULL AND (scheduledAtMs IS NULL OR scheduledAtMs <= :now) " +
+            "ORDER BY sortAtMs DESC LIMIT :limit",
+    )
+    suspend fun unreadIncoming(limit: Int, now: Long): List<MessageEntity>
+
+    /** The next scheduled message still waiting for its time. */
+    @Query("SELECT MIN(scheduledAtMs) FROM messages WHERE scheduledAtMs > :now")
+    suspend fun nextScheduled(now: Long): Long?
+
+    @Query("UPDATE messages SET openedAtMs = COALESCE(openedAtMs, :atMs) WHERE id = :id")
+    suspend fun markLetterOpened(id: String, atMs: Long)
+
+    @Query("UPDATE messages SET endedAtMs = :atMs WHERE id = :id")
+    suspend fun endLiveLocation(id: String, atMs: Long)
 
     // ---- attachments ----
 
@@ -253,6 +314,30 @@ interface MessageDao {
 }
 
 @Dao
+interface TogetherDao {
+    @Query("SELECT * FROM answers ORDER BY day DESC")
+    fun observeAnswers(): Flow<List<AnswerEntity>>
+
+    @Query("SELECT * FROM answers WHERE day = :day")
+    suspend fun answer(day: Long): AnswerEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putAnswer(answer: AnswerEntity)
+
+    @Query("SELECT * FROM moods ORDER BY atMs DESC LIMIT 200")
+    fun observeMoods(): Flow<List<MoodEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addMood(mood: MoodEntity)
+
+    @Query("DELETE FROM answers")
+    suspend fun clearAnswers()
+
+    @Query("DELETE FROM moods")
+    suspend fun clearMoods()
+}
+
+@Dao
 interface OutboxDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun add(item: OutboxEntity)
@@ -267,10 +352,11 @@ interface OutboxDao {
     suspend fun clear()
 }
 
-@Database(entities = [MessageEntity::class, OutboxEntity::class], version = 2, exportSchema = false)
+@Database(entities = [MessageEntity::class, OutboxEntity::class, AnswerEntity::class, MoodEntity::class], version = 3, exportSchema = false)
 abstract class MamiDatabase : RoomDatabase() {
     abstract fun messages(): MessageDao
     abstract fun outbox(): OutboxDao
+    abstract fun together(): TogetherDao
 
     companion object {
         /** Attachments, link previews, reactions, edits, unsend, pins, stars and calls. */
@@ -290,6 +376,24 @@ abstract class MamiDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS outbox (id TEXT NOT NULL, payloadJson TEXT NOT NULL, " +
                         "createdAtMs INTEGER NOT NULL, PRIMARY KEY(id))",
+                )
+            }
+        }
+
+        /** Scheduled messages, letters, check-ins, live location, daily answers and moods. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                listOf(
+                    "scheduledAtMs INTEGER", "title TEXT", "paper TEXT", "unlockAtMs INTEGER",
+                    "untilMs INTEGER", "endedAtMs INTEGER",
+                ).forEach { db.execSQL("ALTER TABLE messages ADD COLUMN $it") }
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS answers (day INTEGER NOT NULL, questionId TEXT NOT NULL, mine TEXT, " +
+                        "mineAtMs INTEGER, theirs TEXT, theirsAtMs INTEGER, PRIMARY KEY(day))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS moods (id TEXT NOT NULL, fromMe INTEGER NOT NULL, mood TEXT NOT NULL, " +
+                        "note TEXT, atMs INTEGER NOT NULL, PRIMARY KEY(id))",
                 )
             }
         }

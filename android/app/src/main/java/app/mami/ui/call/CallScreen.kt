@@ -98,6 +98,7 @@ import app.mami.ui.UiController
 import app.mami.ui.chat.visiblePartnerStatus
 import app.mami.ui.components.Avatar
 import app.mami.ui.components.FloatingHearts
+import app.mami.ui.components.SignalBars
 import app.mami.ui.theme.Mami
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -239,9 +240,15 @@ fun CallScreen(ui: UiController, calls: Calls, call: CallState) {
                 AnimatedContent(phaseText(call, name), transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "phase") { text ->
                     Text(text, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
                 }
-                partnerPhoneLine(status, name)?.let { line ->
-                    Spacer(Modifier.height(6.dp))
-                    Text(line, color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                partnerConnection(status)?.let { line ->
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (status?.signalLevel != null && status.network != NetworkKind.OFFLINE) {
+                            SignalBars(status.signalLevel, color = Color.White)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(line, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                    }
                 }
                 if (call.video && active && !call.partnerCameraOn) {
                     Spacer(Modifier.height(6.dp))
@@ -330,20 +337,28 @@ private fun phaseText(call: CallState, name: String): String {
     }
 }
 
-/** "Their phone: 23% · Wi-Fi" — so a call that won't connect is never a mystery. */
-private fun partnerPhoneLine(status: app.mami.core.DeviceStatus?, name: String): String? {
+/**
+ * Their connection, for "why is it not connecting?": Wi-Fi or mobile data and
+ * how strong the signal is. (Their battery is already the ring round the picture.)
+ */
+private fun partnerConnection(status: app.mami.core.DeviceStatus?): String? {
     if (status == null) return null
-    val parts = buildList {
-        status.batteryPercent?.let { add(if (status.charging == true) "$it% · charging" else "$it%") }
-        when (status.network) {
-            NetworkKind.WIFI -> add("Wi-Fi")
-            NetworkKind.CELLULAR -> add("mobile data")
-            NetworkKind.OFFLINE -> add("offline")
-            else -> Unit
-        }
-        if (status.doNotDisturb == true) add("Do Not Disturb")
+    val network = when (status.network) {
+        NetworkKind.WIFI -> "Wi-Fi"
+        NetworkKind.CELLULAR -> "Mobile data"
+        NetworkKind.ETHERNET -> "Cable"
+        NetworkKind.OFFLINE -> "Offline"
+        else -> null
     }
-    return if (parts.isEmpty()) null else "$name's phone: ${parts.joinToString(" · ")}"
+    val signal = when (status.signalLevel) {
+        null -> null
+        0, 1 -> "weak signal"
+        2 -> "okay signal"
+        3 -> "good signal"
+        else -> "great signal"
+    }
+    val parts = listOfNotNull(network, signal.takeIf { network != "Offline" }) + listOfNotNull("Do Not Disturb".takeIf { status.doNotDisturb == true })
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 @Composable

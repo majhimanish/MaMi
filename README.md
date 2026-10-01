@@ -8,7 +8,7 @@ one went quiet.
   <img src="docs/screenshots/08-chat.png" width="200" alt="Chat">
   <img src="docs/screenshots/18-chat-media.png" width="200" alt="Photos, voice messages and files in the chat">
   <img src="docs/screenshots/25-call-ringing.png" width="200" alt="Calling: ringing on their phone">
-  <img src="docs/screenshots/20-shared-media.png" width="200" alt="Media, links and files">
+  <img src="docs/screenshots/29-together.png" width="200" alt="Together: days, next meeting, question of the day">
 </p>
 
 More in [`docs/screenshots/`](docs/screenshots). CI renders them from the
@@ -55,6 +55,25 @@ real Compose screens on every push.
   your partner's phone and their battery, and support mute,
   speaker/Bluetooth, camera flip, a floating window (picture-in-picture) and
   call history in the chat.
+- **Together**, a page that's just the two of you:
+  - **days together** since the day you set, and the countdown to your
+    anniversary;
+  - **the next time you'll meet**, counting down in days, hours and minutes;
+  - **a question of the day**, the same on both phones; you see your
+    partner's answer once you've answered too;
+  - **mood check-ins** with a note, and the last seven days of both moods;
+  - **love letters** on paper you pick, in handwriting, optionally sealed
+    until a date; the envelope opens when it's read;
+  - **"Home safe", "Leaving now" and "Arrived"** in one tap;
+  - **live location** for 15 minutes, an hour or 8 hours, end-to-end
+    encrypted: how far apart you are, which way, moving or not, and Open in
+    Maps;
+  - **scheduled messages**, picked on your partner's clock when you're in
+    different time zones; they stay a surprise until their time;
+  - **pause sharing** for an hour, until morning or until you resume: your
+    partner sees "Sharing paused" instead of a phone that seems dead.
+- **Automatic statuses** (opt-in): "🚗 Driving" while your phone notices
+  you're in a car, and "Woke up" the first time you use it in the morning.
 - **Privacy**: keys sealed by the Android Keystore, no cloud backups, optional
   hidden notification text, content-free push notifications.
 
@@ -81,6 +100,10 @@ works with no server and no second phone.
     PDF or a link, react to your message, edit, unsend or pin hers;
   - have Maya call you (voice or video), hang up, drop her connection or
     turn her camera off;
+  - fill the Together page, and have Maya answer the question, check in a
+    mood, send a (sealed) letter, say she's home safe, share her live
+    location as she walks, schedule a surprise, pause sharing, drive or wake
+    up;
   - change the colour theme and dark mode;
   - start over.
 

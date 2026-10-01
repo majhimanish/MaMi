@@ -1,16 +1,22 @@
 package app.mami.sync
 
 import android.net.Uri
+import app.mami.core.CheckInKind
 import app.mami.core.DeviceStatus
 import app.mami.core.LinkPreview
 import app.mami.core.NudgeKind
 import app.mami.core.ShareKind
+import app.mami.core.TogetherKey
 import app.mami.data.ConnectionState
 import app.mami.data.InviteDto
 import app.mami.data.PartnerDto
 import app.mami.data.PresenceDto
 import app.mami.data.SavedQuickStatus
+import app.mami.data.SharedLocation
+import app.mami.data.TogetherInfo
+import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MessageEntity
+import app.mami.data.db.MoodEntity
 import app.mami.media.VoiceRecording
 import java.io.File
 import kotlinx.coroutines.flow.Flow
@@ -80,7 +86,8 @@ interface MamiBackend {
     fun markPartnerVerified()
     fun dismissKeyChanged()
 
-    fun sendText(text: String, replyTo: String? = null, link: LinkPreview? = null)
+    /** [deliverAt]: a scheduled message, hidden on both phones until then. */
+    fun sendText(text: String, replyTo: String? = null, link: LinkPreview? = null, deliverAt: Long? = null)
     fun sendNudge(kind: NudgeKind)
 
     /**
@@ -117,6 +124,48 @@ interface MamiBackend {
 
     suspend fun search(query: String): List<MessageEntity>
     suspend fun linkPreview(url: String): LinkPreview?
+
+    // ---- together ----
+
+    /** The day you got together and the next time you'll meet. */
+    val together: StateFlow<TogetherInfo>
+    fun setTogether(key: TogetherKey, value: String?)
+
+    /** Daily question answers, newest day first. */
+    val answers: Flow<List<AnswerEntity>>
+    fun answerQuestion(text: String)
+
+    /** Mood check-ins, both of you, newest first. */
+    val moods: Flow<List<MoodEntity>>
+    fun setMood(mood: String, note: String?)
+
+    /** A love letter, optionally sealed until [openAt]. */
+    fun sendLetter(title: String, body: String, paper: String, openAt: Long?)
+
+    /** Opens a letter from the partner (if it isn't sealed any more); they see that it was opened. */
+    fun openLetter(id: String)
+    fun checkIn(kind: CheckInKind)
+
+    /** The partner's live location, while they share it. */
+    val partnerLocation: StateFlow<SharedLocation?>
+
+    /** I'm sharing my live location until then. */
+    val myLocationUntil: StateFlow<Long?>
+    fun shareLocation(durationMs: Long)
+
+    /** Where this phone last was (lat, lng), if it may know: for the distance to the partner. */
+    suspend fun myLocation(): Pair<Double, Double>?
+    fun stopSharingLocation()
+
+    /** Nothing about this phone is shared until then (null: sharing as usual). */
+    val sharingPausedUntil: StateFlow<Long?>
+    fun pauseSharing(until: Long?)
+
+    /** "🚗 Driving" automatically while in a vehicle. */
+    var autoDriving: Boolean
+
+    /** "Woke up at 7:12" automatically, the first time the phone is used in the morning. */
+    var autoWakeUp: Boolean
 
     fun onComposerChanged(text: String)
     fun markChatRead()

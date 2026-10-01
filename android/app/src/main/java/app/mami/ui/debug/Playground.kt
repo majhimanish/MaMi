@@ -253,6 +253,30 @@ fun Playground(controller: AppController, onDismiss: () -> Unit) {
                     }
                 }
 
+                Section("Together with Maya") {
+                    val paused = (status?.pausedUntilMs ?: 0) > System.currentTimeMillis()
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Action("✨ Fill the Together page") { demo.showcaseTogether() }
+                        Action("💭 She answers today's question") { demo.partnerAnswers() }
+                        Action("😴 Mood: tired") { demo.partnerMood() }
+                        Action("🥺 Mood: misses you") { demo.partnerMood("🥺", "Come home soon") }
+                        Action("💌 Letter") { demo.receiveLetter() }
+                        Action("🔒 Sealed letter (2 days)") { demo.receiveLetter(sealedForDays = 2) }
+                        Action("🏠 Home safe") { demo.receiveCheckIn() }
+                        Action("📍 Shares live location") { demo.partnerSharesLocation() }
+                        Action("📍 Stops sharing location") { demo.partnerStopsSharingLocation() }
+                        Action("🎁 Scheduled surprise in 15 s") { demo.partnerSchedules() }
+                        Action(if (paused) "▶️ She resumes sharing" else "⏸ She pauses sharing") { demo.partnerPausesSharing(!paused) }
+                        Action("🚗 Her phone: driving") { demo.partnerDriving(status?.autoStatus == null) }
+                        Action("☀️ She woke up") { demo.partnerWokeUp() }
+                        Action("💞 Open Together") {
+                            controller.goTo(Destination.Chat)
+                            controller.overlay = Overlay.Together
+                            onDismiss()
+                        }
+                    }
+                }
+
                 Section("Maya does something to a message") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Action("❤️ Reacts to mine") { demo.partnerReacts() }

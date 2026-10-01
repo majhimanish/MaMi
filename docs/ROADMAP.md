@@ -6,7 +6,10 @@ Sign-in, pairing, end-to-end encrypted chat with four message states, typing,
 presence, two-way status sharing, partner hints, dying-battery alert, nudges,
 quick statuses, safety codes, unlink/sign-out/delete; photos, videos, voice
 messages, files and link previews; reply, reactions, edit, unsend, pins and
-stars; search and shared media; voice and video calls. See the README.
+stars; search and shared media; voice and video calls; the Together page
+(days together, next meeting, question of the day, moods, love letters,
+check-ins, live location, scheduled messages, pausing sharing) and automatic
+driving and woke-up statuses. See the README.
 
 Before handing the APK to testers:
 
@@ -20,18 +23,18 @@ Before handing the APK to testers:
    "Unrestricted".
 4. Calls: try Wi-Fi to mobile data, two different carriers, Bluetooth
    headphones, a locked phone, and calls while the app is closed.
+5. Live location with the screen off for an hour, scheduled messages while
+   the receiving phone is in Doze, and the driving status on a real drive
+   (it needs Google Play services).
 
 ## Next (Android)
 
-Couple features (to be picked):
+Couple features still to pick:
 
 - Home-screen widget: partner status, battery, local time, countdown
-- Scheduled messages in the partner's time zone ("good morning at 7 am theirs")
-- Anniversaries, days together, countdown to the next meeting, "on this day"
-- Daily question, mood check-in, love letters
-- "Home safe" check-in and time-limited live location
-- Automatic statuses: driving (activity recognition), "woke up at 7:12"
-- Pause sharing for a while, visible to the partner
+- "On this day": photos and messages from a year ago
+- Anniversary reminders as notifications, and more dates (birthdays)
+- A real map for live location (a map provider that doesn't see who looks)
 
 Basics still to do:
 

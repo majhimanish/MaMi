@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PermMedia
+import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -38,6 +39,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -49,10 +52,12 @@ import app.mami.core.NetworkKind
 import app.mami.core.NudgeKind
 import app.mami.core.RingerMode
 import app.mami.core.ShareKind
+import app.mami.data.Moods
 import app.mami.data.PresenceDto
+import app.mami.data.db.MoodEntity
 import app.mami.ui.Format
 import app.mami.ui.components.Avatar
-import app.mami.ui.components.BatteryGauge
+import app.mami.ui.components.BatteryIcon
 import app.mami.ui.components.MiniClock
 import app.mami.ui.components.SignalBars
 import app.mami.ui.theme.Mami
@@ -74,6 +79,8 @@ fun PartnerSheet(
     onDismiss: () -> Unit,
     onCall: ((video: Boolean) -> Unit)? = null,
     onMedia: (() -> Unit)? = null,
+    mood: MoodEntity? = null,
+    onTogether: (() -> Unit)? = null,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -92,13 +99,22 @@ fun PartnerSheet(
                             QuickAction(Icons.Filled.Videocam, "Video", Modifier.weight(1f)) { call(true) }
                         }
                         onMedia?.let { QuickAction(Icons.Filled.PermMedia, "Media", Modifier.weight(1f), it) }
+                        onTogether?.let { QuickAction(Icons.Filled.VolunteerActivism, "Together", Modifier.weight(1f), it) }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                mood?.let { MoodCardLine(it, name, now) }
                 hints.filter { it.text != "Online now" }.forEach { hint -> HintCard(hint) }
 
                 Spacer(Modifier.height(8.dp))
-                if (status == null) {
+                val paused = (status?.pausedUntilMs ?: 0) > now
+                if (paused) {
+                    Text(
+                        "$name paused sharing for a while, so their battery, network and time aren't shown. Nothing's wrong with their phone.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (status == null) {
                     Text(
                         "$name's phone hasn't shared anything yet. It will once MaMi has run on their phone.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -173,13 +189,18 @@ private fun Hero(name: String, email: String, status: DeviceStatus?, presence: P
                     .background(Color.White.copy(alpha = 0.6f)),
             )
             Spacer(Modifier.height(16.dp))
+            // Battery and presence are shown in full below, so the picture just gets a pretty frame.
             Box(
                 Modifier
+                    .shadow(18.dp, CircleShape, ambientColor = Color.White, spotColor = Color.White)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.92f))
-                    .padding(4.dp),
+                    .background(Brush.sweepGradient(listOf(Color.White, Color(0xFFFFD6E8), Color.White, Color(0xFFE3D4FF), Color.White)))
+                    .padding(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.35f))
+                    .padding(3.dp),
             ) {
-                Avatar(name, size = 92.dp, battery = status?.batteryPercent, charging = status?.charging == true, online = presence?.online == true)
+                Avatar(name, size = 92.dp)
             }
             Spacer(Modifier.height(10.dp))
             Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White)
@@ -192,6 +213,27 @@ private fun Hero(name: String, email: String, status: DeviceStatus?, presence: P
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.9f),
             )
+        }
+    }
+}
+
+@Composable
+private fun MoodCardLine(mood: MoodEntity, name: String, now: Long) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(mood.mood, fontSize = 26.sp)
+            Column(Modifier.padding(start = 12.dp)) {
+                Text(Moods.sentence(name, mood.mood).removeSuffix(" ${mood.mood}"), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    listOfNotNull(mood.note?.let { "“$it”" }, Format.relative(mood.atMs, now)).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -242,7 +284,7 @@ private fun BatteryTile(status: DeviceStatus, modifier: Modifier) {
         },
         null,
         modifier,
-    ) { BatteryGauge(level, charging) }
+    ) { BatteryIcon(level, charging) }
 }
 
 @Composable

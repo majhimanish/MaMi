@@ -11,6 +11,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -57,6 +60,13 @@ fun batteryColor(percent: Int?, charging: Boolean): Color = when {
 }
 
 /**
+ * Where the battery ring starts: just past the online dot at the bottom right
+ * (45°), going clockwise, so the ring only runs under the dot when the
+ * battery is nearly full.
+ */
+private const val RING_START = 62f
+
+/**
  * The partner's initial on the theme gradient. When their battery is shared,
  * a ring around it shows how full it is; a green dot means the app is open.
  */
@@ -79,8 +89,8 @@ fun Avatar(
                 val stroke = this.size.minDimension * 0.08f
                 val inset = stroke / 2
                 val arcSize = Size(this.size.width - stroke, this.size.height - stroke)
-                drawArc(track, -90f, 360f, false, Offset(inset, inset), arcSize, style = Stroke(stroke))
-                drawArc(ringColor, -90f, 360f * sweep, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                drawArc(track, RING_START, 360f, false, Offset(inset, inset), arcSize, style = Stroke(stroke))
+                drawArc(ringColor, RING_START, 360f * sweep, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
             }
         }
         val inner = if (battery != null) size * 0.76f else size
@@ -177,41 +187,54 @@ fun SignalBars(level: Int?, modifier: Modifier = Modifier, color: Color = Materi
     }
 }
 
-/** A big ring that fills with the battery level. */
+/**
+ * A battery like the one in Android's status bar: the body fills up in the
+ * battery's colour, with the percentage inside (dark over the empty part,
+ * white over the filled part) and a bolt while charging.
+ */
 @Composable
-fun BatteryGauge(percent: Int?, charging: Boolean, modifier: Modifier = Modifier, size: Dp = 76.dp) {
+fun BatteryIcon(percent: Int?, charging: Boolean, modifier: Modifier = Modifier, width: Dp = 92.dp) {
+    val height = width * 0.5f
     val color = batteryColor(percent, charging)
-    val track = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-    val sweep by animateFloatAsState((percent ?: 0) / 100f, tween(1000), label = "gauge")
-    Box(modifier.size(size), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val stroke = this.size.minDimension * 0.11f
-            val inset = stroke / 2
-            val arcSize = Size(this.size.width - stroke, this.size.height - stroke)
-            drawArc(track, 135f, 270f, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
-            drawArc(
-                Brush.sweepGradient(listOf(color.copy(alpha = 0.6f), color)),
-                135f,
-                270f * sweep,
-                false,
-                Offset(inset, inset),
-                arcSize,
-                style = Stroke(stroke, cap = StrokeCap.Round),
+    val level by animateFloatAsState((percent ?: 0).coerceIn(0, 100) / 100f, tween(1000), label = "battery")
+    val outline = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+    val body = RoundedCornerShape(height * 0.26f)
+    val inner = RoundedCornerShape(height * 0.16f)
+    val label: @Composable (Color) -> Unit = { textColor ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (charging) Icon(Icons.Filled.Bolt, contentDescription = null, tint = textColor, modifier = Modifier.size(height * 0.42f))
+            Text(
+                if (percent == null) "—" else "$percent",
+                color = textColor,
+                fontFamily = Fredoka,
+                fontWeight = FontWeight.Bold,
+                fontSize = (height.value * 0.42f).sp,
             )
         }
-        Text(
-            if (percent == null) "—" else "$percent%",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
+    }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(width, height).border(2.5.dp, outline, body).padding(4.dp)) {
+            Box(Modifier.fillMaxSize().clip(inner).background(outline.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
+                label(MaterialTheme.colorScheme.onSurface)
+            }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .drawWithContent { clipRect(right = size.width * level) { this@drawWithContent.drawContent() } }
+                    .clip(inner)
+                    .background(color),
+                contentAlignment = Alignment.Center,
+            ) {
+                label(Color.White)
+            }
+        }
+        Box(
+            Modifier
+                .padding(start = 2.dp)
+                .size(width = width * 0.06f, height = height * 0.36f)
+                .clip(RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
+                .background(outline),
         )
-        if (charging) {
-            Icon(
-                Icons.Filled.Bolt,
-                contentDescription = "Charging",
-                tint = color,
-                modifier = Modifier.align(Alignment.BottomCenter).size(size * 0.26f),
-            )
-        }
     }
 }
 

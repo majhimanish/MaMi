@@ -48,7 +48,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Wifi
@@ -276,15 +275,7 @@ private fun EmailStep(ui: UiController) {
             Spacer(Modifier.height(14.dp))
             GradientButton("Send me a code", onClick = submit, busy = ui.busy, enabled = ui.signInEmail.contains('@'))
         }
-        Spacer(Modifier.height(20.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-            Text(
-                "  End-to-end encrypted. Not even MaMi can read your messages.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Spacer(Modifier.height(12.dp))
         if (BuildConfig.DEBUG && ui.backend !is DemoBackend) {
             TextButton(onClick = { editingServer = true }) { Text("Server: ${ui.backend.serverUrl.ifEmpty { "not set" }}") }
         }

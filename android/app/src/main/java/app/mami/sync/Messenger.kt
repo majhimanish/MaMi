@@ -9,6 +9,7 @@ import app.mami.calls.CallOutcome
 import app.mami.calls.CallSignals
 import app.mami.calls.Calls
 import app.mami.core.AlertKind
+import app.mami.core.CheckInKind
 import app.mami.core.Ciphertext
 import app.mami.core.CoreException
 import app.mami.core.DeviceStatus
@@ -18,10 +19,13 @@ import app.mami.core.MediaKind
 import app.mami.core.NudgeKind
 import app.mami.core.Payload
 import app.mami.core.ShareKind
+import app.mami.core.TogetherKey
+import app.mami.core.dailyQuestion
 import app.mami.core.decryptFile
 import app.mami.core.encryptFile
 import app.mami.core.payloadFromJson
 import app.mami.core.payloadToJson
+import app.mami.core.questionDay
 import app.mami.core.verifyIdentity
 import app.mami.data.AcceptedDto
 import app.mami.data.Api
@@ -33,6 +37,7 @@ import app.mami.data.IdentityDto
 import app.mami.data.InviteDto
 import app.mami.data.MamiJson
 import app.mami.data.MeDto
+import app.mami.data.Moods
 import app.mami.data.PartnerDto
 import app.mami.data.PresenceDto
 import app.mami.data.Realtime
@@ -40,15 +45,22 @@ import app.mami.data.SavedQuickStatus
 import app.mami.data.SendRequestDto
 import app.mami.data.ServerFrame
 import app.mami.data.Settings
+import app.mami.data.SharedLocation
+import app.mami.data.TogetherInfo
+import app.mami.data.pausedIndefinitely
+import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MamiDatabase
 import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
 import app.mami.data.db.MessageState
+import app.mami.data.db.MoodEntity
 import app.mami.data.db.OutboxEntity
 import app.mami.data.db.Transfer
 import app.mami.device.DeviceStatusCollector
+import app.mami.device.Driving
 import app.mami.device.RawStatus
+import app.mami.location.LocationService
 import app.mami.media.LinkPreviewer
 import app.mami.media.MediaLibrary
 import app.mami.media.PreparedMedia
@@ -101,6 +113,7 @@ class Messenger(
 ) : MamiBackend, CallSignals {
     private val dao = db.messages()
     private val outbox = db.outbox()
+    private val togetherDao = db.together()
 
     private val _signedIn = MutableStateFlow(settings.token != null)
     override val signedIn: StateFlow<Boolean> = _signedIn.asStateFlow()
@@ -234,6 +247,8 @@ class Messenger(
     /** Periodic background work: catch up, retry, refresh our status. */
     suspend fun backgroundTick() {
         if (settings.token == null) return
+        checkIdle()
+        quietly { onAlarm() }
         quietly { refresh() }
         quietly { sync() }
         quietly { flushOutbox() }
@@ -379,23 +394,25 @@ class Messenger(
 
     // ---- conversation ---------------------------------------------------------------
 
-    override fun sendText(text: String, replyTo: String?, link: LinkPreview?) {
+    override fun sendText(text: String, replyTo: String?, link: LinkPreview?, deliverAt: Long?) {
         val body = text.trim()
         if (body.isEmpty()) return
         val now = System.currentTimeMillis()
+        val scheduled = deliverAt?.takeIf { it > now }
         val message = MessageEntity(
             id = newId(),
             fromMe = true,
             kind = MessageKind.TEXT,
             body = body,
             sentAtMs = now,
-            sortAtMs = now,
+            sortAtMs = scheduled ?: now,
             state = MessageState.PENDING,
             replyTo = replyTo,
             linkUrl = link?.url,
             linkTitle = link?.title,
             linkDescription = link?.description,
             linkImage = link?.image,
+            scheduledAtMs = scheduled,
         )
         launchSafely {
             dao.insert(message)
@@ -601,6 +618,12 @@ class Messenger(
         launchSafely {
             val message = dao.get(id)?.takeIf { it.fromMe } ?: return@launchSafely
             media.delete(message.mediaFile)
+            if (message.hiddenUntil(System.currentTimeMillis())) {
+                // A scheduled message nobody has seen yet: cancel it quietly on both phones.
+                dao.delete(id)
+                if (message.state != MessageState.PENDING) enqueue(Payload.Unsend(id, System.currentTimeMillis()))
+                return@launchSafely
+            }
             if (message.state == MessageState.PENDING) {
                 // It never left this phone: just take it back.
                 dao.delete(id)
@@ -649,6 +672,256 @@ class Messenger(
     }
 
     override suspend fun linkPreview(url: String): LinkPreview? = if (settings.linkPreviews) linkPreviewer.fetch(url) else null
+
+    // ---- together ------------------------------------------------------------------------
+
+    override val together: StateFlow<TogetherInfo> = settings.togetherFlow
+    override val answers: Flow<List<AnswerEntity>> = togetherDao.observeAnswers()
+    override val moods: Flow<List<MoodEntity>> = togetherDao.observeMoods()
+    override val partnerLocation: StateFlow<SharedLocation?> = settings.partnerLocationFlow
+    override val myLocationUntil: StateFlow<Long?> = settings.locationUntilFlow
+    override val sharingPausedUntil: StateFlow<Long?> = settings.pausedUntilFlow
+
+    override fun setTogether(key: TogetherKey, value: String?) {
+        val now = System.currentTimeMillis()
+        settings.together = applyTogether(settings.together, key, value, now)
+        launchSafely { enqueue(Payload.Together(key, value, now)) }
+    }
+
+    override fun answerQuestion(text: String) {
+        val answer = text.trim()
+        if (answer.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val day = questionDay(now)
+        val question = dailyQuestion(day)
+        launchSafely {
+            val existing = togetherDao.answer(day)
+            togetherDao.putAnswer(
+                existing?.copy(mine = answer, mineAtMs = now) ?: AnswerEntity(day, question.id, mine = answer, mineAtMs = now),
+            )
+            enqueue(Payload.Answer(day, question.id, answer, now))
+        }
+    }
+
+    override fun setMood(mood: String, note: String?) {
+        val now = System.currentTimeMillis()
+        val id = newId()
+        val text = note?.trim()?.ifEmpty { null }
+        launchSafely {
+            togetherDao.addMood(MoodEntity(id, fromMe = true, mood = mood, note = text, atMs = now))
+            enqueue(Payload.Mood(id, mood, text, now))
+        }
+    }
+
+    override fun sendLetter(title: String, body: String, paper: String, openAt: Long?) {
+        if (body.isBlank()) return
+        val now = System.currentTimeMillis()
+        queueMessage(
+            MessageEntity(
+                id = newId(), fromMe = true, kind = MessageKind.LETTER, body = body.trim(), sentAtMs = now, sortAtMs = now,
+                state = MessageState.PENDING, title = title.trim().ifEmpty { null }, paper = paper,
+                unlockAtMs = openAt?.takeIf { it > now },
+            ),
+        )
+    }
+
+    override fun openLetter(id: String) {
+        launchSafely {
+            val letter = dao.get(id)?.takeIf { !it.fromMe && it.kind == MessageKind.LETTER && it.openedAtMs == null } ?: return@launchSafely
+            val now = System.currentTimeMillis()
+            if ((letter.unlockAtMs ?: 0) > now) return@launchSafely
+            dao.markLetterOpened(id, now)
+            enqueue(Payload.Opened(id, now))
+        }
+    }
+
+    override fun checkIn(kind: CheckInKind) {
+        val now = System.currentTimeMillis()
+        queueMessage(MessageEntity(id = newId(), fromMe = true, kind = MessageKind.CHECKIN, body = kind.name, sentAtMs = now, sortAtMs = now, state = MessageState.PENDING))
+    }
+
+    override fun shareLocation(durationMs: Long) {
+        val now = System.currentTimeMillis()
+        val until = now + durationMs
+        val previous = settings.locationShareId
+        val id = newId()
+        settings.locationShareId = id
+        settings.locationShareUntil = until
+        launchSafely {
+            if (previous != null) dao.endLiveLocation(previous, now)
+            dao.insert(MessageEntity(id = id, fromMe = true, kind = MessageKind.LIVE_LOCATION, body = "", sentAtMs = now, sortAtMs = now, state = MessageState.PENDING, untilMs = until))
+            flushOutbox()
+        }
+        LocationService.start(context)
+        Alarms.at(context, until, Alarms.LOCATION_ENDS)
+    }
+
+    override suspend fun myLocation(): Pair<Double, Double>? =
+        withContext(Dispatchers.IO) { LocationService.lastKnown(context)?.let { it.latitude to it.longitude } }
+
+    override fun stopSharingLocation() {
+        val id = settings.locationShareId
+        settings.locationShareId = null
+        settings.locationShareUntil = null
+        lastLocationSent = null
+        LocationService.stop(context)
+        Alarms.cancel(context, Alarms.LOCATION_ENDS)
+        if (id == null) return
+        launchSafely {
+            val now = System.currentTimeMillis()
+            dao.endLiveLocation(id, now)
+            enqueue(Payload.LiveLocationEnd(id, now))
+        }
+    }
+
+    @Volatile
+    private var lastLocationSent: android.location.Location? = null
+
+    /** A new position from [LocationService]: send it, but not more than every few seconds unless it moved. */
+    fun onMyLocation(location: android.location.Location) {
+        val until = settings.locationShareUntil ?: return
+        val now = System.currentTimeMillis()
+        if (until <= now || (settings.sharingPausedUntil ?: 0) > now) {
+            stopSharingLocation()
+            return
+        }
+        val last = lastLocationSent
+        if (last != null && location.time - last.time < LOCATION_MIN_GAP_MS && location.distanceTo(last) < LOCATION_MIN_MOVE_M) return
+        lastLocationSent = location
+        launchSafely {
+            sendPayload(
+                Payload.Location(
+                    lat = location.latitude,
+                    lng = location.longitude,
+                    accuracyM = location.accuracy.takeIf { location.hasAccuracy() },
+                    speedMps = location.speed.takeIf { location.hasSpeed() },
+                    atMs = now,
+                    untilMs = until,
+                ),
+                KIND_LOCATION,
+                newId(),
+                push = false,
+            )
+        }
+    }
+
+    override fun pauseSharing(until: Long?) {
+        val now = System.currentTimeMillis()
+        val pause = until?.takeIf { it > now }
+        settings.sharingPausedUntil = pause
+        if (pause != null) {
+            if (settings.locationShareUntil != null) stopSharingLocation()
+            if (!pausedIndefinitely(pause)) Alarms.at(context, pause, Alarms.PAUSE_ENDS) else Alarms.cancel(context, Alarms.PAUSE_ENDS)
+        } else {
+            Alarms.cancel(context, Alarms.PAUSE_ENDS)
+        }
+        launchSafely { publishStatus(force = true) }
+    }
+
+    override var autoDriving: Boolean
+        get() = settings.autoDriving
+        set(value) {
+            settings.autoDriving = value
+            if (value) {
+                if (!Driving.enable(context)) settings.autoDriving = false
+            } else {
+                Driving.disable(context)
+                settings.autoStatus = null
+                launchSafely { publishStatus(force = true) }
+            }
+        }
+
+    override var autoWakeUp: Boolean
+        get() = settings.autoWakeUp
+        set(value) {
+            settings.autoWakeUp = value
+            if (!value) settings.wokeAtMs = 0
+            launchSafely { publishStatus(force = true) }
+        }
+
+    /** Activity recognition says the phone started or stopped travelling in a vehicle. */
+    fun onDriving(driving: Boolean) {
+        if (!settings.autoDriving) return
+        val now = System.currentTimeMillis()
+        settings.autoStatus = if (driving) app.mami.data.SavedQuickStatus("🚗", "Driving", now + DRIVING_EXPIRES_MS) else null
+        launchSafely { publishStatus(force = true) }
+    }
+
+    fun onScreenOff() {
+        settings.lastScreenOffAt = System.currentTimeMillis()
+    }
+
+    fun onUnlocked() {
+        maybeWokeUp(settings.lastScreenOffAt)
+    }
+
+    /** Background fallback for waking up, when the app wasn't running at screen-off. */
+    private fun checkIdle() {
+        val power = context.getSystemService(android.os.PowerManager::class.java) ?: return
+        val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
+        val inUse = power.isInteractive && keyguard?.isKeyguardLocked != true
+        val now = System.currentTimeMillis()
+        if (!inUse) {
+            if (settings.idleSince == 0L) settings.idleSince = now
+        } else {
+            val since = settings.idleSince
+            settings.idleSince = 0
+            if (since > 0) maybeWokeUp(maxOf(since, settings.lastScreenOffAt.takeIf { it > since } ?: since))
+        }
+    }
+
+    /** First use of the phone in the morning after a long rest: "Woke up at 7:12". */
+    private fun maybeWokeUp(idleSince: Long) {
+        if (!settings.autoWakeUp || idleSince <= 0) return
+        val now = System.currentTimeMillis()
+        val zone = java.time.ZoneId.systemDefault()
+        val local = java.time.Instant.ofEpochMilli(now).atZone(zone)
+        if (local.hour !in WAKE_FROM_HOUR until WAKE_UNTIL_HOUR) return
+        if (now - idleSince < WAKE_AFTER_IDLE_MS) return
+        val last = settings.wokeAtMs
+        if (last > 0 && java.time.Instant.ofEpochMilli(last).atZone(zone).toLocalDate() == local.toLocalDate()) return
+        settings.wokeAtMs = now
+        launchSafely { publishStatus(force = true) }
+    }
+
+    /**
+     * An alarm (or the periodic check): show scheduled messages that are due,
+     * end a pause or a live location share whose time is up.
+     */
+    suspend fun onAlarm() {
+        val now = System.currentTimeMillis()
+        val pause = settings.sharingPausedUntil
+        if (pause != null && pause <= now) {
+            settings.sharingPausedUntil = null
+            quietly { publishStatus(force = true) }
+        }
+        val sharingUntil = settings.locationShareUntil
+        if (sharingUntil != null && sharingUntil <= now) stopSharingLocation()
+        val due = dao.unreadIncoming(8, now)
+        if (due.any { it.scheduledAtMs != null && it.scheduledAtMs <= now } && !(chatVisible && foreground)) {
+            notifications.showConversation(partnerName, due, settings.hideNotificationText)
+        }
+        scheduleNextDelivery()
+    }
+
+    private suspend fun scheduleNextDelivery() {
+        val next = dao.nextScheduled(System.currentTimeMillis()) ?: return
+        Alarms.at(context, next, Alarms.SCHEDULED)
+    }
+
+    private fun applyTogether(info: TogetherInfo, key: TogetherKey, value: String?, at: Long): TogetherInfo = when (key) {
+        TogetherKey.SINCE -> if (at > info.sinceAt) info.copy(since = value, sinceAt = at) else info
+        TogetherKey.NEXT_MEETING -> if (at > info.nextMeetingAt) info.copy(nextMeetingMs = value?.toLongOrNull(), nextMeetingAt = at) else info
+        TogetherKey.NEXT_MEETING_LABEL -> if (at > info.nextMeetingLabelAt) info.copy(nextMeetingLabel = value, nextMeetingLabelAt = at) else info
+        TogetherKey.UNKNOWN -> info
+    }
+
+    private fun queueMessage(message: MessageEntity) {
+        launchSafely {
+            dao.insert(message)
+            flushOutbox()
+        }
+    }
 
     /** Queues a small payload that must reach the partner, even if the app closes first. */
     private suspend fun enqueue(payload: Payload) {
@@ -869,7 +1142,11 @@ class Messenger(
             message.sentAtMs,
             message.replyTo,
             message.linkUrl?.let { LinkPreview(it, message.linkTitle, message.linkDescription, message.linkImage) },
+            message.scheduledAtMs,
         )
+        MessageKind.LETTER -> Payload.Letter(message.id, message.title.orEmpty(), message.body, message.paper ?: "cream", message.unlockAtMs, message.sentAtMs)
+        MessageKind.CHECKIN -> Payload.CheckIn(message.id, CheckInKind.entries.firstOrNull { it.name == message.body } ?: CheckInKind.HOME_SAFE, message.sentAtMs)
+        MessageKind.LIVE_LOCATION -> Payload.LiveLocation(message.id, message.untilMs ?: message.sentAtMs, message.sentAtMs)
         MessageKind.MEDIA -> Payload.Media(
             id = message.id,
             sentAtMs = message.sentAtMs,
@@ -906,8 +1183,18 @@ class Messenger(
         if (partner.identity == null || settings.token == null) return
         val raw = collector.read()
         checkLowBattery(raw)
-        val status = collector.toShared(raw, settings.shares, settings.quickStatus)
+        val status = collector.toShared(
+            raw,
+            settings.shares,
+            settings.quickStatus,
+            pausedUntil = settings.sharingPausedUntil,
+            auto = settings.autoStatus.takeIf { settings.autoDriving },
+            wokeAt = settings.wokeAtMs.takeIf { settings.autoWakeUp && it > 0 },
+        )
         val fingerprint = listOf(
+            status.pausedUntilMs,
+            status.autoStatus,
+            status.wokeAtMs,
             status.batteryPercent?.div(5),
             status.charging,
             status.network,
@@ -1018,7 +1305,7 @@ class Messenger(
             if (chatVisible && foreground) {
                 markChatRead()
             } else {
-                notifications.showConversation(partnerName, dao.unreadIncoming(8), settings.hideNotificationText)
+                notifications.showConversation(partnerName, dao.unreadIncoming(8, System.currentTimeMillis()), settings.hideNotificationText)
             }
         }
     }
@@ -1031,7 +1318,7 @@ class Messenger(
                 dao.markDelivered(envelope.id, envelope.atMs)
                 return Handled.DONE
             }
-            KIND_MESSAGE, KIND_STATUS, KIND_EPHEMERAL, KIND_CALL -> Unit
+            KIND_MESSAGE, KIND_STATUS, KIND_EPHEMERAL, KIND_CALL, KIND_LOCATION -> Unit
             else -> return Handled.DONE
         }
         val body = envelope.body ?: return Handled.DONE
@@ -1067,14 +1354,16 @@ class Messenger(
             is Payload.Hello -> Unit
             is Payload.Text -> {
                 setTyping(false)
-                return insertIncoming(
+                val scheduled = payload.deliverAtMs?.takeIf { it > envelope.atMs }
+                val handled = insertIncoming(
                     MessageEntity(
                         id = payload.id,
                         fromMe = false,
                         kind = MessageKind.TEXT,
                         body = payload.body,
                         sentAtMs = payload.sentAtMs,
-                        sortAtMs = envelope.atMs,
+                        sortAtMs = scheduled ?: envelope.atMs,
+                        scheduledAtMs = scheduled,
                         state = MessageState.DELIVERED,
                         deliveredAtMs = now,
                         replyTo = payload.replyTo,
@@ -1084,6 +1373,57 @@ class Messenger(
                         linkImage = payload.link?.image,
                     ),
                 )
+                if (scheduled != null && scheduled > now) {
+                    // It's a surprise until its time: no notification now, an alarm then.
+                    scheduleNextDelivery()
+                    return Handled.DONE
+                }
+                return handled
+            }
+            is Payload.Letter -> return insertIncoming(
+                MessageEntity(
+                    id = payload.id, fromMe = false, kind = MessageKind.LETTER, body = payload.body, sentAtMs = payload.sentAtMs,
+                    sortAtMs = envelope.atMs, state = MessageState.DELIVERED, deliveredAtMs = now, title = payload.title.ifEmpty { null },
+                    paper = payload.paper, unlockAtMs = payload.openAtMs,
+                ),
+            )
+            is Payload.CheckIn -> return insertIncoming(
+                MessageEntity(
+                    id = payload.id, fromMe = false, kind = MessageKind.CHECKIN, body = payload.kind.name, sentAtMs = payload.sentAtMs,
+                    sortAtMs = envelope.atMs, state = MessageState.DELIVERED, deliveredAtMs = now,
+                ),
+            )
+            is Payload.LiveLocation -> return insertIncoming(
+                MessageEntity(
+                    id = payload.id, fromMe = false, kind = MessageKind.LIVE_LOCATION, body = "", sentAtMs = payload.sentAtMs,
+                    sortAtMs = envelope.atMs, state = MessageState.DELIVERED, deliveredAtMs = now, untilMs = payload.untilMs,
+                ),
+            )
+            is Payload.Location -> {
+                val current = settings.partnerLocation
+                if (current == null || payload.atMs >= current.atMs) {
+                    settings.partnerLocation = SharedLocation(payload.lat, payload.lng, payload.accuracyM, payload.speedMps, payload.atMs, payload.untilMs)
+                }
+            }
+            is Payload.LiveLocationEnd -> {
+                dao.endLiveLocation(payload.id, payload.atMs)
+                settings.partnerLocation = settings.partnerLocation?.copy(ended = true)
+            }
+            is Payload.Together -> settings.together = applyTogether(settings.together, payload.key, payload.value, payload.updatedAtMs)
+            is Payload.Answer -> {
+                val existing = togetherDao.answer(payload.day)
+                togetherDao.putAnswer(
+                    existing?.copy(theirs = payload.text, theirsAtMs = payload.answeredAtMs)
+                        ?: AnswerEntity(payload.day, payload.questionId, theirs = payload.text, theirsAtMs = payload.answeredAtMs),
+                )
+                notifications.showTogether(
+                    "💭 $partnerName answered today's question",
+                    if (existing?.mine == null) "Answer it too to see what they said" else "See both answers",
+                )
+            }
+            is Payload.Mood -> {
+                togetherDao.addMood(MoodEntity(payload.id, fromMe = false, mood = payload.mood, note = payload.note, atMs = payload.atMs))
+                notifications.showTogether(Moods.sentence(partnerName, payload.mood), payload.note ?: "Tap to say something sweet")
             }
             is Payload.Media -> {
                 setTyping(false)
@@ -1121,8 +1461,10 @@ class Messenger(
             is Payload.Reaction -> dao.setTheirReaction(payload.targetId, payload.emoji)
             is Payload.Edit -> dao.edit(payload.targetId, fromMe = false, body = payload.body, atMs = payload.editedAtMs)
             is Payload.Unsend -> {
-                dao.get(payload.targetId)?.takeIf { !it.fromMe }?.let { media.delete(it.mediaFile) }
-                dao.unsend(payload.targetId, fromMe = false)
+                val target = dao.get(payload.targetId)?.takeIf { !it.fromMe }
+                target?.let { media.delete(it.mediaFile) }
+                // A scheduled message that was never shown just disappears.
+                if (target?.hiddenUntil(now) == true) dao.delete(payload.targetId) else dao.unsend(payload.targetId, fromMe = false)
             }
             is Payload.Pin -> dao.setPinned(payload.targetId, if (payload.pinned) payload.atMs else null)
             is Payload.Opened -> dao.markOpenedByPartner(payload.targetId, payload.atMs)
@@ -1241,8 +1583,14 @@ class Messenger(
 
     private suspend fun wipeConversation() {
         VoicePlayer.stop()
+        if (settings.locationShareUntil != null) {
+            LocationService.stop(context)
+            Alarms.cancel(context, Alarms.LOCATION_ENDS)
+        }
         dao.deleteAll()
         outbox.clear()
+        togetherDao.clearAnswers()
+        togetherDao.clearMoods()
         media.clear()
         crypto.forgetSessions(null)
         settings.clearPartner()
@@ -1301,6 +1649,13 @@ class Messenger(
         const val KIND_EPHEMERAL = "ephemeral"
         const val KIND_DELIVERED = "delivered"
         const val KIND_CALL = "call"
+        const val KIND_LOCATION = "location"
+        const val LOCATION_MIN_GAP_MS = 8_000L
+        const val LOCATION_MIN_MOVE_M = 25f
+        const val DRIVING_EXPIRES_MS = 3 * 60 * 60_000L
+        const val WAKE_FROM_HOUR = 4
+        const val WAKE_UNTIL_HOUR = 12
+        const val WAKE_AFTER_IDLE_MS = 3 * 60 * 60_000L
         const val MIN_ONE_TIME_KEYS = 5
         const val ONE_TIME_KEY_BATCH = 20
         const val SYNC_PAGE_SIZE = 500

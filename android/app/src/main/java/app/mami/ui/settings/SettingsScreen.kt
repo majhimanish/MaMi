@@ -1,6 +1,10 @@
 package app.mami.ui.settings
 
+import android.Manifest
 import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -29,13 +33,16 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.HeartBroken
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -63,10 +70,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mami.BuildConfig
 import app.mami.data.SavedQuickStatus
+import app.mami.data.pausedIndefinitely
+import app.mami.ui.Format
 import app.mami.ui.Overlay
 import app.mami.ui.UiController
 import app.mami.ui.components.Avatar
@@ -112,6 +122,18 @@ fun SettingsScreen(ui: UiController) {
     var lowBattery by remember(backend) { mutableStateOf(backend.lowBatteryAlerts) }
     var hideText by remember(backend) { mutableStateOf(backend.hideNotificationText) }
     var previews by remember(backend) { mutableStateOf(backend.linkPreviews) }
+    var driving by remember(backend) { mutableStateOf(backend.autoDriving) }
+    var wakeUp by remember(backend) { mutableStateOf(backend.autoWakeUp) }
+    val paused by backend.sharingPausedUntil.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    fun turnOnDriving() {
+        backend.autoDriving = true
+        driving = backend.autoDriving
+        if (!driving) Toast.makeText(context, "This phone can't tell when you're driving (it needs Google Play services).", Toast.LENGTH_LONG).show()
+    }
+    val activityPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) turnOnDriving() else Toast.makeText(context, "MaMi needs physical activity access to notice driving.", Toast.LENGTH_LONG).show()
+    }
     var pickedPreset by remember { mutableStateOf<Preset?>(null) }
     var editingName by rememberSaveable { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
@@ -188,6 +210,29 @@ fun SettingsScreen(ui: UiController) {
                 }
             }
 
+            // Statuses the phone sets by itself
+            SectionCard("Automatic status") {
+                ToggleRow(
+                    Icons.Filled.DirectionsCar,
+                    "Driving",
+                    "Shows “🚗 Driving” while your phone notices you're in a car, so $partnerName knows why you're quiet",
+                    driving,
+                ) { on ->
+                    when {
+                        !on -> {
+                            backend.autoDriving = false
+                            driving = false
+                        }
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> activityPermission.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+                        else -> turnOnDriving()
+                    }
+                }
+                ToggleRow(Icons.Filled.WbSunny, "Woke up", "Tells $partnerName when you first pick up your phone in the morning", wakeUp) {
+                    backend.autoWakeUp = it
+                    wakeUp = it
+                }
+            }
+
             // Appearance
             SectionCard("Appearance") {
                 Text("Colours", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 16.dp, top = 8.dp))
@@ -238,6 +283,16 @@ fun SettingsScreen(ui: UiController) {
                     lowBattery = it
                     backend.lowBatteryAlerts = it
                 }
+                val pausedUntil = paused?.takeIf { it > System.currentTimeMillis() }
+                NavRow(
+                    Icons.Filled.PauseCircle,
+                    if (pausedUntil != null) "Sharing paused" else "Pause sharing",
+                    when {
+                        pausedUntil == null -> "Take a break without $partnerName worrying"
+                        pausedIndefinitely(pausedUntil) -> "Until you turn it back on"
+                        else -> "Until ${Format.time(pausedUntil)}"
+                    },
+                ) { ui.overlay = Overlay.Together }
                 Text(
                     "Sharing is two-way: you only see what you share too.",
                     style = MaterialTheme.typography.bodySmall,

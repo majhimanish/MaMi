@@ -2,6 +2,7 @@ package app.mami.demo
 
 import android.net.Uri
 import app.mami.calls.CallOutcome
+import app.mami.core.CheckInKind
 import app.mami.core.DeviceStatus
 import app.mami.core.LinkPreview
 import app.mami.core.NetworkKind
@@ -9,24 +10,36 @@ import app.mami.core.NudgeKind
 import app.mami.core.QuickStatus
 import app.mami.core.RingerMode
 import app.mami.core.ShareKind
+import app.mami.core.TogetherKey
+import app.mami.core.dailyQuestion
+import app.mami.core.questionDay
 import app.mami.data.ApiException
 import app.mami.data.ConnectionState
 import app.mami.data.IdentityDto
 import app.mami.data.InviteDto
+import app.mami.data.Moods
+import app.mami.data.PAUSED_INDEFINITELY
 import app.mami.data.PartnerDto
 import app.mami.data.PresenceDto
 import app.mami.data.SavedQuickStatus
+import app.mami.data.SharedLocation
+import app.mami.data.TogetherInfo
+import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
 import app.mami.data.db.MessageState
+import app.mami.data.db.MoodEntity
 import app.mami.data.db.Transfer
+import app.mami.data.pausedIndefinitely
 import app.mami.media.MediaException
 import app.mami.media.MediaLibrary
 import app.mami.media.PreparedMedia
 import app.mami.media.VoiceRecording
 import app.mami.sync.MamiBackend
 import java.io.File
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
@@ -107,6 +120,31 @@ class DemoBackend(
 
     private val _progress = MutableStateFlow<Map<String, Float>>(emptyMap())
     override val transferProgress: StateFlow<Map<String, Float>> = _progress.asStateFlow()
+
+    private val _together = MutableStateFlow(TogetherInfo())
+    override val together: StateFlow<TogetherInfo> = _together.asStateFlow()
+
+    private val _answers = MutableStateFlow<List<AnswerEntity>>(emptyList())
+    override val answers: Flow<List<AnswerEntity>> = _answers
+
+    private val _moods = MutableStateFlow<List<MoodEntity>>(emptyList())
+    override val moods: Flow<List<MoodEntity>> = _moods
+
+    private val _partnerLocation = MutableStateFlow<SharedLocation?>(null)
+    override val partnerLocation: StateFlow<SharedLocation?> = _partnerLocation.asStateFlow()
+
+    private val _myLocationUntil = MutableStateFlow<Long?>(null)
+    override val myLocationUntil: StateFlow<Long?> = _myLocationUntil.asStateFlow()
+
+    private val _pausedUntil = MutableStateFlow<Long?>(null)
+    override val sharingPausedUntil: StateFlow<Long?> = _pausedUntil.asStateFlow()
+
+    override var autoDriving: Boolean = false
+    override var autoWakeUp: Boolean = false
+
+    private var myLocationShare: String? = null
+    private var partnerLocationShare: String? = null
+    private var walkJob: Job? = null
 
     /** Pretend calls with Maya; she answers when [autoReply] is on. */
     override val calls = DemoCalls(scope, autoAnswer = { autoReply }) { id, outgoing, video, outcome, startedAt, duration ->
@@ -229,11 +267,28 @@ class DemoBackend(
 
     // ---- conversation -----------------------------------------------------------------
 
-    override fun sendText(text: String, replyTo: String?, link: LinkPreview?) {
+    override fun sendText(text: String, replyTo: String?, link: LinkPreview?, deliverAt: Long?) {
         val body = text.trim()
         if (body.isEmpty()) return
+        val scheduled = deliverAt?.takeIf { it > clock() }
         val id = send(MessageKind.TEXT, body) {
-            it.copy(replyTo = replyTo, linkUrl = link?.url, linkTitle = link?.title, linkDescription = link?.description, linkImage = link?.image)
+            it.copy(
+                replyTo = replyTo, linkUrl = link?.url, linkTitle = link?.title, linkDescription = link?.description, linkImage = link?.image,
+                scheduledAtMs = scheduled, sortAtMs = scheduled ?: it.sortAtMs,
+            )
+        }
+        if (scheduled != null) {
+            // Maya sees it at its time, and loves it.
+            if (autoReply) {
+                scope.launch {
+                    delay(scheduled - clock() + 3000)
+                    if (_presence.value?.online == true && _messages.value.any { it.id == id && !it.unsent }) {
+                        update(id) { it.copy(state = MessageState.READ, readAtMs = clock()) }
+                        partnerReacts(id, "🥹")
+                    }
+                }
+            }
+            return
         }
         if (autoReply) {
             scope.launch {
@@ -412,7 +467,129 @@ class DemoBackend(
 
     override fun markChatRead() {
         val now = clock()
-        _messages.update { list -> list.map { if (!it.fromMe && it.readAtMs == null) it.copy(readAtMs = now) else it } }
+        _messages.update { list -> list.map { if (!it.fromMe && it.readAtMs == null && !it.hiddenUntil(now)) it.copy(readAtMs = now) else it } }
+    }
+
+    // ---- together ---------------------------------------------------------------------
+
+    override fun setTogether(key: TogetherKey, value: String?) {
+        val now = clock()
+        _together.update {
+            when (key) {
+                TogetherKey.SINCE -> it.copy(since = value, sinceAt = now)
+                TogetherKey.NEXT_MEETING -> it.copy(nextMeetingMs = value?.toLongOrNull(), nextMeetingAt = now)
+                TogetherKey.NEXT_MEETING_LABEL -> it.copy(nextMeetingLabel = value, nextMeetingLabelAt = now)
+                TogetherKey.UNKNOWN -> it
+            }
+        }
+    }
+
+    override fun answerQuestion(text: String) {
+        val answer = text.trim()
+        if (answer.isEmpty()) return
+        val now = clock()
+        val day = questionDay(now)
+        putAnswer(day) { it.copy(mine = answer, mineAtMs = now) }
+        if (autoReply && _answers.value.firstOrNull { it.day == day }?.theirs == null) {
+            scope.launch {
+                delay(4000)
+                partnerAnswers()
+            }
+        }
+    }
+
+    override fun setMood(mood: String, note: String?) {
+        val now = clock()
+        _moods.update { listOf(MoodEntity(UUID.randomUUID().toString(), true, mood, note?.trim()?.ifEmpty { null }, now)) + it }
+        if (autoReply && _presence.value?.online == true) {
+            scope.launch {
+                delay(2500)
+                partnerTypes(1800)
+                delay(1800)
+                receiveText(
+                    when {
+                        Moods.of(mood)?.low == true -> "Sending you the biggest hug 🤗 want me to call?"
+                        mood == "😴" -> "Rest a little, love 💗"
+                        mood == "🥺" -> "Miss you more 🥺"
+                        else -> "Love that for you 🥰"
+                    },
+                )
+            }
+        }
+    }
+
+    override fun sendLetter(title: String, body: String, paper: String, openAt: Long?) {
+        if (body.isBlank()) return
+        val now = clock()
+        val sealed = openAt?.takeIf { it > now }
+        val id = send(MessageKind.LETTER, body.trim()) { it.copy(title = title.trim().ifEmpty { null }, paper = paper, unlockAtMs = sealed) }
+        if (autoReply && sealed == null) {
+            scope.launch {
+                replyLater(id) {
+                    update(id) { it.copy(openedAtMs = clock()) }
+                    receiveText("I'm not crying, you're crying 🥹💌")
+                }
+            }
+        }
+    }
+
+    override fun openLetter(id: String) {
+        val now = clock()
+        update(id) { if (!it.fromMe && it.kind == MessageKind.LETTER && it.openedAtMs == null && (it.unlockAtMs ?: 0) <= now) it.copy(openedAtMs = now) else it }
+    }
+
+    override fun checkIn(kind: CheckInKind) {
+        val id = send(MessageKind.CHECKIN, kind.name)
+        if (autoReply) {
+            scope.launch {
+                replyLater(id) {
+                    receiveText(
+                        when (kind) {
+                            CheckInKind.LEAVING -> "Okay! Tell me when you're there 🚗"
+                            CheckInKind.ARRIVED -> "Yay, have fun 🥰"
+                            else -> "Yay, glad you're home safe 💗"
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    override fun shareLocation(durationMs: Long) {
+        val until = clock() + durationMs
+        myLocationShare?.let { previous -> update(previous) { it.copy(endedAtMs = clock()) } }
+        val id = send(MessageKind.LIVE_LOCATION, "") { it.copy(untilMs = until) }
+        myLocationShare = id
+        _myLocationUntil.value = until
+        if (autoReply) scope.launch { replyLater(id) { receiveText("I can see you on the map 📍 drive safe") } }
+    }
+
+    override suspend fun myLocation(): Pair<Double, Double> = LAKESIDE
+
+    override fun stopSharingLocation() {
+        myLocationShare?.let { id -> update(id) { it.copy(endedAtMs = clock()) } }
+        myLocationShare = null
+        _myLocationUntil.value = null
+    }
+
+    override fun pauseSharing(until: Long?) {
+        val pause = until?.takeIf { it > clock() }
+        _pausedUntil.value = pause
+        if (pause != null) {
+            stopSharingLocation()
+            if (pausedIndefinitely(pause)) return
+            scope.launch {
+                delay(pause - clock())
+                if (_pausedUntil.value == pause) _pausedUntil.value = null
+            }
+        }
+    }
+
+    private fun putAnswer(day: Long, change: (AnswerEntity) -> AnswerEntity) {
+        _answers.update { list ->
+            val existing = list.firstOrNull { it.day == day } ?: AnswerEntity(day, dailyQuestion(day).id)
+            (list.filterNot { it.day == day } + change(existing)).sortedByDescending { it.day }
+        }
     }
 
     // ---- playground controls ------------------------------------------------------------
@@ -617,6 +794,145 @@ class DemoBackend(
         _messages.update { (it + added).sortedBy(MessageEntity::sortAtMs) }
     }
 
+    /** Maya answers today's question. */
+    fun partnerAnswers(text: String? = null) {
+        val now = clock()
+        val day = questionDay(now)
+        putAnswer(day) { it.copy(theirs = text ?: PARTNER_ANSWERS.random(Random(day)), theirsAtMs = now) }
+    }
+
+    /** Maya checks in a mood. */
+    fun partnerMood(mood: String = "😴", note: String? = "Long day, need cuddles", minutesAgo: Long = 0) {
+        val at = clock() - minutesAgo * MINUTE
+        _moods.update { (it + MoodEntity(UUID.randomUUID().toString(), false, mood, note, at)).sortedByDescending(MoodEntity::atMs) }
+    }
+
+    /** Maya sends a love letter, sealed for a few days or to open now. */
+    fun receiveLetter(sealedForDays: Int? = null) {
+        receive(MessageKind.LETTER, LETTER) {
+            it.copy(
+                title = if (sealedForDays != null) "Open on our anniversary" else "For my favourite person",
+                paper = if (sealedForDays != null) "rose" else "cream",
+                unlockAtMs = sealedForDays?.let { days -> clock() + days * DAY },
+            )
+        }
+    }
+
+    fun receiveCheckIn(kind: CheckInKind = CheckInKind.HOME_SAFE) {
+        receive(MessageKind.CHECKIN, kind.name)
+    }
+
+    /**
+     * Maya shares her live location for an hour; with [moving] she walks
+     * along Lakeside towards you, a step every few seconds.
+     */
+    fun partnerSharesLocation(minutes: Long = 60, moving: Boolean = true) {
+        val until = clock() + minutes * MINUTE
+        partnerLocationShare?.let { previous -> update(previous) { it.copy(endedAtMs = clock()) } }
+        partnerLocationShare = receive(MessageKind.LIVE_LOCATION, "") { it.copy(untilMs = until) }
+        walkJob?.cancel()
+        val start = WALK.first()
+        _partnerLocation.value = SharedLocation(start.first, start.second, 8f, 1.3f, clock(), until)
+        if (!moving) return
+        walkJob = scope.launch {
+            var step = 0
+            while (clock() < until) {
+                delay(4000)
+                step++
+                val t = (step % 60) / 60.0
+                val (lat, lng) = along(t)
+                _partnerLocation.update { it?.copy(lat = lat, lng = lng, atMs = clock()) }
+            }
+        }
+    }
+
+    fun partnerStopsSharingLocation() {
+        walkJob?.cancel()
+        partnerLocationShare?.let { id -> update(id) { it.copy(endedAtMs = clock()) } }
+        partnerLocationShare = null
+        _partnerLocation.update { it?.copy(ended = true) }
+    }
+
+    /** Maya pauses sharing for [hours] (null: until she turns it back on), or resumes. */
+    fun partnerPausesSharing(paused: Boolean, hours: Int? = 2) {
+        val now = clock()
+        val current = _partnerStatus.value?.first ?: defaultStatus()
+        _partnerStatus.value = if (paused) {
+            DeviceStatus(
+                capturedAtMs = now, batteryPercent = null, charging = null, network = null, signalLevel = null, ringer = null,
+                doNotDisturb = null, timezone = null, utcOffsetMinutes = null, quickStatus = current.quickStatus, shares = emptyList(),
+                platform = current.platform, pausedUntilMs = hours?.let { now + it * HOUR } ?: PAUSED_INDEFINITELY,
+            ) to now
+        } else {
+            defaultStatus().copy(quickStatus = current.quickStatus) to now
+        }
+    }
+
+    /** The phone noticed Maya is in a car (or got out). */
+    fun partnerDriving(driving: Boolean) {
+        updatePartnerStatus { it.copy(autoStatus = if (driving) QuickStatus("🚗", "Driving", clock() + 3 * HOUR) else null) }
+    }
+
+    /** Maya just picked up her phone for the first time this morning. */
+    fun partnerWokeUp(minutesAgo: Long = 20) {
+        updatePartnerStatus { it.copy(wokeAtMs = clock() - minutesAgo * MINUTE) }
+    }
+
+    /** Maya schedules a surprise that appears in [seconds]. */
+    fun partnerSchedules(seconds: Long = 15) {
+        val at = clock() + seconds * 1000
+        receive(MessageKind.TEXT, "Surprise! Look in your bag 🎁", at = at) { it.copy(scheduledAtMs = at, readAtMs = null) }
+    }
+
+    /**
+     * Fills the together page and adds a letter, check-in and live location
+     * to the chat, synchronously (screenshots and the playground).
+     */
+    fun showcaseTogether() {
+        val now = clock()
+        val today = questionDay(now)
+        _answers.value = listOf(
+            AnswerEntity(today, dailyQuestion(today).id, theirs = "The way you hum when you cook 🎶", theirsAtMs = now - 3 * HOUR),
+            AnswerEntity(today - 1, dailyQuestion(today - 1).id, "Pokhara, the boat at sunrise", now - 26 * HOUR, "Our first trip, obviously 🛶", now - 25 * HOUR),
+            AnswerEntity(today - 2, dailyQuestion(today - 2).id, "Your laugh, every time", now - 50 * HOUR, "When you fall asleep on calls 😴", now - 49 * HOUR),
+        )
+        _moods.value = listOf(
+            MoodEntity("mo1", false, "😴", "Long day, need cuddles", now - 40 * MINUTE),
+            MoodEntity("mo2", true, "😌", null, now - 3 * HOUR),
+            MoodEntity("mo3", false, "😊", null, now - 26 * HOUR),
+            MoodEntity("mo4", true, "🥺", "Come home sooon", now - 28 * HOUR),
+            MoodEntity("mo5", false, "🤩", "Got the job!!", now - 3 * DAY),
+            MoodEntity("mo6", true, "🥰", null, now - 4 * DAY),
+            MoodEntity("mo7", false, "😤", "Exams", now - 6 * DAY),
+        )
+        fun theirs(minutesAgo: Long, kind: String, body: String, change: (MessageEntity) -> MessageEntity = { it }) = change(
+            MessageEntity(
+                UUID.randomUUID().toString(), false, kind, body, sentAtMs = now - minutesAgo * MINUTE - 400, sortAtMs = now - minutesAgo * MINUTE,
+                state = MessageState.DELIVERED, deliveredAtMs = now - minutesAgo * MINUTE, readAtMs = now, readReceiptSent = true,
+            ),
+        )
+        val mine = MessageEntity(
+            UUID.randomUUID().toString(), true, MessageKind.LETTER, MY_LETTER, sentAtMs = now - 30 * MINUTE, sortAtMs = now - 30 * MINUTE,
+            state = MessageState.READ, readAtMs = now - 20 * MINUTE, readReceiptSent = true, title = "Just because", paper = "lavender",
+            openedAtMs = now - 20 * MINUTE,
+        )
+        val location = theirs(5, MessageKind.LIVE_LOCATION, "") { it.copy(untilMs = now + 55 * MINUTE) }
+        val scheduled = MessageEntity(
+            UUID.randomUUID().toString(), true, MessageKind.TEXT, "Happy anniversary, my love 💗", sentAtMs = now - 10 * MINUTE,
+            sortAtMs = now + 2 * DAY, state = MessageState.DELIVERED, deliveredAtMs = now - 10 * MINUTE, scheduledAtMs = now + 2 * DAY,
+        )
+        partnerLocationShare = location.id
+        _partnerLocation.value = SharedLocation(WALK[1].first, WALK[1].second, 9f, 1.2f, now - 20_000, now + 55 * MINUTE)
+        val added = listOf(
+            theirs(45, MessageKind.LETTER, LETTER) { it.copy(title = "Open on our anniversary", paper = "rose", unlockAtMs = now + 2 * DAY) },
+            mine,
+            theirs(12, MessageKind.CHECKIN, CheckInKind.HOME_SAFE.name),
+            location,
+            scheduled,
+        )
+        _messages.update { (it + added).sortedBy(MessageEntity::sortAtMs) }
+    }
+
     /** Maya reacts to my newest message. */
     fun partnerReacts(id: String? = null, emoji: String = "❤️") {
         val target = id ?: _messages.value.lastOrNull { it.fromMe && !it.unsent }?.id ?: return
@@ -672,6 +988,7 @@ class DemoBackend(
         _secure.value = true
         if (withHistory) {
             _messages.value = history(now)
+            _together.value = demoTogether(now)
         } else if (autoReply) {
             scope.launch {
                 delay(1500)
@@ -692,6 +1009,15 @@ class DemoBackend(
         _keyChanged.value = false
         _verified.value = null
         _messages.value = emptyList()
+        _together.value = TogetherInfo()
+        _answers.value = emptyList()
+        _moods.value = emptyList()
+        walkJob?.cancel()
+        _partnerLocation.value = null
+        _myLocationUntil.value = null
+        _pausedUntil.value = null
+        myLocationShare = null
+        partnerLocationShare = null
     }
 
     private fun send(
@@ -711,7 +1037,7 @@ class DemoBackend(
         if (!_secure.value || _connection.value != ConnectionState.Connected) return
         delay(350)
         val sentAt = clock()
-        update(id) { it.copy(state = MessageState.SENT, serverAtMs = sentAt, sortAtMs = sentAt) }
+        update(id) { it.copy(state = MessageState.SENT, serverAtMs = sentAt, sortAtMs = it.scheduledAtMs ?: sentAt) }
         delay(700)
         update(id) { it.copy(state = MessageState.DELIVERED, deliveredAtMs = clock()) }
     }
@@ -794,6 +1120,22 @@ class DemoBackend(
         platform = "android",
     )
 
+    /** Together since Valentine's 2024, meeting for Dashain in five days. */
+    private fun demoTogether(now: Long): TogetherInfo {
+        val zone = ZoneId.systemDefault()
+        val meeting = LocalDate.now(zone).plusDays(5).atTime(10, 30).atZone(zone).toInstant().toEpochMilli()
+        return TogetherInfo(since = "2024-02-14", sinceAt = 1, nextMeetingMs = meeting, nextMeetingAt = 1, nextMeetingLabel = "Dashain in Pokhara", nextMeetingLabelAt = 1)
+    }
+
+    /** A point [t] (0..1) of the way along Maya's walk. */
+    private fun along(t: Double): Pair<Double, Double> {
+        val scaled = t * (WALK.size - 1)
+        val i = scaled.toInt().coerceAtMost(WALK.size - 2)
+        val f = scaled - i
+        val (a, b) = WALK[i] to WALK[i + 1]
+        return (a.first + (b.first - a.first) * f) to (a.second + (b.second - a.second) * f)
+    }
+
     private fun history(now: Long): List<MessageEntity> {
         val maker = demoMedia
         fun mine(minutesAgo: Long, body: String, state: Int = MessageState.READ, kind: String = MessageKind.TEXT): MessageEntity {
@@ -866,6 +1208,25 @@ class DemoBackend(
 
     private companion object {
         const val PARTNER_KEY = "demo-ed25519"
+
+        /** Lakeside, Pokhara: where "you" are in the demo. */
+        val LAKESIDE = 28.2096 to 83.9560
+
+        /** Maya's walk from the airport road towards Lakeside. */
+        val WALK = listOf(28.2005 to 83.9790, 28.2040 to 83.9712, 28.2068 to 83.9655, 28.2085 to 83.9601, 28.2093 to 83.9572)
+
+        val PARTNER_ANSWERS = listOf(
+            "The way you hum when you cook 🎶",
+            "That rainy evening at the tea shop ☔",
+            "Honestly? Your terrible puns 😂",
+            "Sunrise from Sarangkot, with you",
+        )
+
+        const val LETTER = "My love,\n\nI know the distance is hard some days. But every morning I wake up and the first thing I " +
+            "think is that you exist, somewhere, thinking of me too. That's enough to carry me through.\n\nCount down " +
+            "the days with me. I'll be the one running at you at the bus stop.\n\nForever yours,\nMaya"
+
+        const val MY_LETTER = "Maya,\n\nNo reason. I just wanted you to have something from me that isn't a text.\n\nSam"
         const val MINUTE = 60_000L
         const val HOUR = 60 * MINUTE
         const val DAY = 24 * HOUR

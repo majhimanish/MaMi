@@ -52,13 +52,43 @@ class DeviceStatusCollector(private val context: Context) {
     }
 
     /** The status to send, containing only what the person chose to share. */
-    fun toShared(raw: RawStatus, shares: Set<ShareKind>, quick: SavedQuickStatus?): DeviceStatus {
+    /**
+     * What the partner gets: only what's shared. While sharing is paused,
+     * nothing about the phone goes out, only the honest "paused until".
+     */
+    fun toShared(
+        raw: RawStatus,
+        shares: Set<ShareKind>,
+        quick: SavedQuickStatus?,
+        pausedUntil: Long? = null,
+        auto: SavedQuickStatus? = null,
+        wokeAt: Long? = null,
+    ): DeviceStatus {
+        val now = System.currentTimeMillis()
+        val manual = quick?.let { QuickStatus(it.emoji, it.label, it.untilMs) }
+        if (pausedUntil != null && pausedUntil > now) {
+            return DeviceStatus(
+                capturedAtMs = now,
+                batteryPercent = null,
+                charging = null,
+                network = null,
+                signalLevel = null,
+                ringer = null,
+                doNotDisturb = null,
+                timezone = null,
+                utcOffsetMinutes = null,
+                quickStatus = manual,
+                shares = emptyList(),
+                platform = "android",
+                pausedUntilMs = pausedUntil,
+            )
+        }
         val battery = ShareKind.BATTERY in shares
         val network = ShareKind.NETWORK in shares
         val ringer = ShareKind.RINGER in shares
         val time = ShareKind.LOCAL_TIME in shares
         return DeviceStatus(
-            capturedAtMs = System.currentTimeMillis(),
+            capturedAtMs = now,
             batteryPercent = raw.batteryPercent.takeIf { battery },
             charging = raw.charging.takeIf { battery },
             network = raw.network.takeIf { network },
@@ -67,9 +97,11 @@ class DeviceStatusCollector(private val context: Context) {
             doNotDisturb = raw.doNotDisturb.takeIf { ringer },
             timezone = raw.timezone.takeIf { time },
             utcOffsetMinutes = raw.utcOffsetMinutes.takeIf { time },
-            quickStatus = quick?.let { QuickStatus(it.emoji, it.label, it.untilMs) },
+            quickStatus = manual,
             shares = shares.filter { it != ShareKind.UNKNOWN },
             platform = "android",
+            autoStatus = auto?.takeIf { it.untilMs == null || it.untilMs > now }?.let { QuickStatus(it.emoji, it.label, it.untilMs) },
+            wokeAtMs = wokeAt?.takeIf { it > 0 && now - it < 12 * 60 * 60 * 1000L },
         )
     }
 
