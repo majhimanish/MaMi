@@ -7,9 +7,9 @@ presence, two-way status sharing, partner hints, dying-battery alert, nudges,
 quick statuses, safety codes, unlink/sign-out/delete; photos, videos, voice
 messages, files and link previews; reply, reactions, edit, unsend, pins and
 stars; search and shared media; voice and video calls; the Together page
-(days together, next meeting, question of the day, moods, love letters,
-check-ins, live location, scheduled messages, pausing sharing) and automatic
-driving and woke-up statuses. See the README.
+(days together, next meeting, moods, love letters, check-ins, live location,
+scheduled messages, pausing sharing) and automatic driving and woke-up
+statuses. See the README.
 
 Before handing the APK to testers:
 

@@ -61,10 +61,10 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -98,7 +98,6 @@ import app.mami.ui.UiController
 import app.mami.ui.chat.visiblePartnerStatus
 import app.mami.ui.components.Avatar
 import app.mami.ui.components.FloatingHearts
-import app.mami.ui.components.SignalBars
 import app.mami.ui.theme.Mami
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -242,13 +241,7 @@ fun CallScreen(ui: UiController, calls: Calls, call: CallState) {
                 }
                 partnerConnection(status)?.let { line ->
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (status?.signalLevel != null && status.network != NetworkKind.OFFLINE) {
-                            SignalBars(status.signalLevel, color = Color.White)
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        Text(line, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-                    }
+                    Text(line, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                 }
                 if (call.video && active && !call.partnerCameraOn) {
                     Spacer(Modifier.height(6.dp))

@@ -39,6 +39,7 @@ import app.mami.ui.chat.SearchResults
 import app.mami.ui.chat.SearchTopBar
 import app.mami.ui.chat.viewable
 import app.mami.ui.debug.Playground
+import app.mami.ui.pairing.PairScreen
 import app.mami.ui.theme.Appearance
 import app.mami.ui.theme.DarkMode
 import app.mami.ui.theme.MamiTheme
@@ -49,7 +50,6 @@ import app.mami.ui.together.LettersCard
 import app.mami.ui.together.LocationSheet
 import app.mami.ui.together.MoodCard
 import app.mami.ui.together.PauseCard
-import app.mami.ui.together.QuestionCard
 import app.mami.ui.together.SafeCard
 import app.mami.ui.together.ScheduleSheet
 import app.mami.ui.together.ScheduledCard
@@ -111,6 +111,8 @@ class ScreenshotTest {
     @Test fun sharing() = shot("05-sharing", setup = { skipProfile() })
 
     @Test fun pair() = shot("06-pair", setup = { skipSharing() })
+
+    @Test fun pairCode() = shot("06-pair-code", setup = { skipSharing() }) { ui -> PairScreen(ui, startWithCode = true) }
 
     @Test fun invite() = shot("07-invite", setup = {
         skipSharing()
@@ -244,19 +246,17 @@ class ScreenshotTest {
         ui.overlay = Overlay.Together
     })
 
-    @Test fun togetherMoods() = shot("30-together-question-mood", setup = {
+    @Test fun togetherMoods() = shot("30-together-mood", setup = {
         skipPairing()
         showcaseTogether()
     }) { ui ->
         val now = System.currentTimeMillis()
-        val answers by ui.backend.answers.collectAsState(initial = emptyList())
         val moods by ui.backend.moods.collectAsState(initial = emptyList())
         Surface(color = MaterialTheme.colorScheme.background) {
             Column(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                QuestionCard(answers, "Maya", now, onAnswer = {})
                 MoodCard(moods, "Maya", now, onMood = { _, _ -> })
             }
         }

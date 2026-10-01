@@ -11,8 +11,6 @@ import app.mami.core.QuickStatus
 import app.mami.core.RingerMode
 import app.mami.core.ShareKind
 import app.mami.core.TogetherKey
-import app.mami.core.dailyQuestion
-import app.mami.core.questionDay
 import app.mami.data.ApiException
 import app.mami.data.ConnectionState
 import app.mami.data.IdentityDto
@@ -24,7 +22,6 @@ import app.mami.data.PresenceDto
 import app.mami.data.SavedQuickStatus
 import app.mami.data.SharedLocation
 import app.mami.data.TogetherInfo
-import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
@@ -123,9 +120,6 @@ class DemoBackend(
 
     private val _together = MutableStateFlow(TogetherInfo())
     override val together: StateFlow<TogetherInfo> = _together.asStateFlow()
-
-    private val _answers = MutableStateFlow<List<AnswerEntity>>(emptyList())
-    override val answers: Flow<List<AnswerEntity>> = _answers
 
     private val _moods = MutableStateFlow<List<MoodEntity>>(emptyList())
     override val moods: Flow<List<MoodEntity>> = _moods
@@ -484,20 +478,6 @@ class DemoBackend(
         }
     }
 
-    override fun answerQuestion(text: String) {
-        val answer = text.trim()
-        if (answer.isEmpty()) return
-        val now = clock()
-        val day = questionDay(now)
-        putAnswer(day) { it.copy(mine = answer, mineAtMs = now) }
-        if (autoReply && _answers.value.firstOrNull { it.day == day }?.theirs == null) {
-            scope.launch {
-                delay(4000)
-                partnerAnswers()
-            }
-        }
-    }
-
     override fun setMood(mood: String, note: String?) {
         val now = clock()
         _moods.update { listOf(MoodEntity(UUID.randomUUID().toString(), true, mood, note?.trim()?.ifEmpty { null }, now)) + it }
@@ -585,12 +565,6 @@ class DemoBackend(
         }
     }
 
-    private fun putAnswer(day: Long, change: (AnswerEntity) -> AnswerEntity) {
-        _answers.update { list ->
-            val existing = list.firstOrNull { it.day == day } ?: AnswerEntity(day, dailyQuestion(day).id)
-            (list.filterNot { it.day == day } + change(existing)).sortedByDescending { it.day }
-        }
-    }
 
     // ---- playground controls ------------------------------------------------------------
 
@@ -794,13 +768,6 @@ class DemoBackend(
         _messages.update { (it + added).sortedBy(MessageEntity::sortAtMs) }
     }
 
-    /** Maya answers today's question. */
-    fun partnerAnswers(text: String? = null) {
-        val now = clock()
-        val day = questionDay(now)
-        putAnswer(day) { it.copy(theirs = text ?: PARTNER_ANSWERS.random(Random(day)), theirsAtMs = now) }
-    }
-
     /** Maya checks in a mood. */
     fun partnerMood(mood: String = "😴", note: String? = "Long day, need cuddles", minutesAgo: Long = 0) {
         val at = clock() - minutesAgo * MINUTE
@@ -890,12 +857,6 @@ class DemoBackend(
      */
     fun showcaseTogether() {
         val now = clock()
-        val today = questionDay(now)
-        _answers.value = listOf(
-            AnswerEntity(today, dailyQuestion(today).id, theirs = "The way you hum when you cook 🎶", theirsAtMs = now - 3 * HOUR),
-            AnswerEntity(today - 1, dailyQuestion(today - 1).id, "Pokhara, the boat at sunrise", now - 26 * HOUR, "Our first trip, obviously 🛶", now - 25 * HOUR),
-            AnswerEntity(today - 2, dailyQuestion(today - 2).id, "Your laugh, every time", now - 50 * HOUR, "When you fall asleep on calls 😴", now - 49 * HOUR),
-        )
         _moods.value = listOf(
             MoodEntity("mo1", false, "😴", "Long day, need cuddles", now - 40 * MINUTE),
             MoodEntity("mo2", true, "😌", null, now - 3 * HOUR),
@@ -1010,7 +971,6 @@ class DemoBackend(
         _verified.value = null
         _messages.value = emptyList()
         _together.value = TogetherInfo()
-        _answers.value = emptyList()
         _moods.value = emptyList()
         walkJob?.cancel()
         _partnerLocation.value = null
@@ -1214,13 +1174,6 @@ class DemoBackend(
 
         /** Maya's walk from the airport road towards Lakeside. */
         val WALK = listOf(28.2005 to 83.9790, 28.2040 to 83.9712, 28.2068 to 83.9655, 28.2085 to 83.9601, 28.2093 to 83.9572)
-
-        val PARTNER_ANSWERS = listOf(
-            "The way you hum when you cook 🎶",
-            "That rainy evening at the tea shop ☔",
-            "Honestly? Your terrible puns 😂",
-            "Sunrise from Sarangkot, with you",
-        )
 
         const val LETTER = "My love,\n\nI know the distance is hard some days. But every morning I wake up and the first thing I " +
             "think is that you exist, somewhere, thinking of me too. That's enough to carry me through.\n\nCount down " +

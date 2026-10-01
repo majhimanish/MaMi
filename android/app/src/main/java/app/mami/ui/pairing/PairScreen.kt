@@ -3,11 +3,15 @@ package app.mami.ui.pairing
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,87 +62,102 @@ import app.mami.ui.components.CodeBoxes
 import app.mami.ui.components.ErrorMessage
 import app.mami.ui.components.GlassCard
 import app.mami.ui.components.GradientButton
-import app.mami.ui.components.OrDivider
 import app.mami.ui.components.TypingDots
 import app.mami.ui.onboarding.DemoHint
 import app.mami.ui.onboarding.OnboardingScaffold
 import app.mami.ui.onboarding.ScreenTitle
 import app.mami.ui.theme.Mami
 
+/** [startWithCode]: open on "I have a code" instead of "Invite them" (screenshots). */
 @Composable
-fun PairScreen(ui: UiController) {
+fun PairScreen(ui: UiController, startWithCode: Boolean = false) {
     val invite by ui.backend.invite.collectAsStateWithLifecycle()
     val current = invite
     if (current != null && current.expiresAtMs > System.currentTimeMillis()) {
         WaitingForPartner(ui, current)
     } else {
-        ChooseHowToPair(ui)
+        ChooseHowToPair(ui, startWithCode)
     }
 }
 
+/** One way at a time: invite them, or enter their code. A link underneath swaps. */
 @Composable
-private fun ChooseHowToPair(ui: UiController) {
+private fun ChooseHowToPair(ui: UiController, startWithCode: Boolean) {
     var partnerEmail by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
+    var haveCode by rememberSaveable { mutableStateOf(startWithCode) }
 
     OnboardingScaffold(ui, Stage.Pair, topStart = { SignOutButton(ui) }) {
         ScreenTitle("💞", "Link with your person", "One of you creates an invite, the other enters the code. Then it's just the two of you.")
 
-        GlassCard {
-            Text("Invite them", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "Add their email and only they can use the code. Or leave it empty and send the code yourself.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = partnerEmail,
-                onValueChange = {
-                    partnerEmail = it.trim()
-                    ui.clearError()
-                },
-                label = { Text("Their email (optional)") },
-                leadingIcon = { Icon(Icons.Filled.Email, contentDescription = null) },
-                singleLine = true,
-                shape = MaterialTheme.shapes.medium,
-                colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(14.dp))
-            GradientButton("Create invite", onClick = { ui.run({ ui.backend.createInvite(partnerEmail) }) }, busy = ui.busy)
+        AnimatedContent(haveCode, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "pair") { entering ->
+            if (entering) {
+                EnterCode(ui, code) { code = it }
+            } else {
+                Invite(ui, partnerEmail) { partnerEmail = it }
+            }
         }
-
-        OrDivider()
-
-        GlassCard {
-            Text("I have a code", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "Type the 8 letters and numbers your partner sent you.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(14.dp))
-            CodeBoxes(
-                value = code,
-                length = 8,
-                letters = true,
-                separatorAfter = 4,
-                onValueChange = {
-                    code = it
-                    ui.clearError()
-                },
-            )
-            Spacer(Modifier.height(14.dp))
-            FilledTonalButton(
-                onClick = { ui.run({ ui.backend.acceptInvite(code) }) },
-                enabled = code.length == 8 && !ui.busy,
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-            ) { Text("Join my partner", style = MaterialTheme.typography.titleMedium) }
-        }
+        Spacer(Modifier.height(10.dp))
+        TextButton(onClick = {
+            haveCode = !haveCode
+            ui.clearError()
+        }) { Text(if (haveCode) "Invite them instead" else "I have a code") }
         ErrorMessage(ui.error)
-        DemoHint(ui, "Demo mode: any 8-character code links you with Maya.")
+        DemoHint(ui, if (haveCode) "Demo mode: any 8-character code links you with Maya." else "Demo mode: Maya accepts your invite after a few seconds.")
+    }
+}
+
+@Composable
+private fun Invite(ui: UiController, partnerEmail: String, onEmail: (String) -> Unit) {
+    GlassCard {
+        Text("Invite them", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Add their email and only they can use the code. Or leave it empty and send the code yourself.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = partnerEmail,
+            onValueChange = {
+                onEmail(it.trim())
+                ui.clearError()
+            },
+            label = { Text("Their email (optional)") },
+            leadingIcon = { Icon(Icons.Filled.Email, contentDescription = null) },
+            singleLine = true,
+            shape = MaterialTheme.shapes.medium,
+            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(14.dp))
+        GradientButton("Create invite", onClick = { ui.run({ ui.backend.createInvite(partnerEmail) }) }, busy = ui.busy)
+    }
+}
+
+@Composable
+private fun EnterCode(ui: UiController, code: String, onCode: (String) -> Unit) {
+    GlassCard {
+        Text("I have a code", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Type the 8 letters and numbers your partner sent you.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(14.dp))
+        CodeBoxes(
+            value = code,
+            length = 8,
+            letters = true,
+            separatorAfter = 4,
+            onValueChange = {
+                onCode(it)
+                ui.clearError()
+            },
+        )
+        Spacer(Modifier.height(14.dp))
+        GradientButton("Join my partner", onClick = { ui.run({ ui.backend.acceptInvite(code) }) }, busy = ui.busy, enabled = code.length == 8)
     }
 }
 

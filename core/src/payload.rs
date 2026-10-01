@@ -115,13 +115,6 @@ pub enum Payload {
         value: Option<String>,
         updated_at_ms: i64,
     },
-    /// My answer to the daily question.
-    Answer {
-        day: i64,
-        question_id: String,
-        text: String,
-        answered_at_ms: i64,
-    },
     /// How I'm feeling.
     Mood {
         id: String,

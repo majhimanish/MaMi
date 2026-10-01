@@ -257,7 +257,6 @@ fun Playground(controller: AppController, onDismiss: () -> Unit) {
                     val paused = (status?.pausedUntilMs ?: 0) > System.currentTimeMillis()
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Action("✨ Fill the Together page") { demo.showcaseTogether() }
-                        Action("💭 She answers today's question") { demo.partnerAnswers() }
                         Action("😴 Mood: tired") { demo.partnerMood() }
                         Action("🥺 Mood: misses you") { demo.partnerMood("🥺", "Come home soon") }
                         Action("💌 Letter") { demo.receiveLetter() }

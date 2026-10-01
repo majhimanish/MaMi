@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
@@ -55,6 +56,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.Reply
@@ -104,6 +107,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -112,6 +116,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -292,7 +297,7 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, partne
                             Box {
                                 Box(
                                     Modifier
-                                        .size(50.dp)
+                                        .size(ControlSize)
                                         .clip(CircleShape)
                                         .combinedClickable(onClick = { onNudge(NudgeKind.THINKING_OF_YOU) }, onLongClick = { nudgeMenu = true }),
                                     contentAlignment = Alignment.Center,
@@ -324,23 +329,14 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, partne
                             } else {
                                 null
                             }
-                            TextField(
-                                value = state.text,
-                                onValueChange = {
+                            MessageField(
+                                text = state.text,
+                                onText = {
                                     state.text = it
                                     backend.onComposerChanged(it)
                                 },
-                                placeholder = { Text(if (state.editing != null) "Edit your message" else "Say something sweet…") },
-                                maxLines = 5,
-                                shape = RoundedCornerShape(26.dp),
-                                trailingIcon = attachIcons,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent,
-                                    disabledIndicatorColor = Color.Transparent,
-                                ),
+                                placeholder = if (state.editing != null) "Edit your message" else "Say something…",
+                                trailing = attachIcons,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -352,7 +348,7 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, partne
                     if (sendable) {
                         Box(
                             Modifier
-                                .size(50.dp)
+                                .size(ControlSize)
                                 .clip(CircleShape)
                                 .background(Mami.colors.brush)
                                 .combinedClickable(
@@ -457,6 +453,47 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, partne
     }
 }
 
+/** The heart, the typing box and the send/mic button all share this height. */
+private val ControlSize = 50.dp
+
+/**
+ * The typing box. It stays one line tall whatever is typed, so it never
+ * pushes out of line with the heart and the send button; longer messages
+ * wrap and scroll inside it.
+ */
+@Composable
+private fun MessageField(
+    text: String,
+    onText: (String) -> Unit,
+    placeholder: String,
+    trailing: (@Composable () -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface)
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = modifier.height(ControlSize)) {
+        Row(
+            Modifier.fillMaxHeight().padding(start = 18.dp, end = if (trailing != null) 2.dp else 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (text.isEmpty()) {
+                    Text(placeholder, style = style, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                BasicTextField(
+                    value = text,
+                    onValueChange = onText,
+                    textStyle = style,
+                    maxLines = 1,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            trailing?.invoke()
+        }
+    }
+}
+
 private fun granted(context: Context, permission: String) =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
@@ -477,7 +514,7 @@ private fun MicButton(
     val ask by rememberUpdatedState(askPermission)
     Box(
         Modifier
-            .size(50.dp)
+            .size(ControlSize)
             .clip(CircleShape)
             .background(Mami.colors.brush)
             .pointerInput(Unit) {

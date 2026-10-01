@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.filled.Videocam
@@ -54,6 +55,7 @@ import app.mami.core.RingerMode
 import app.mami.core.ShareKind
 import app.mami.data.Moods
 import app.mami.data.PresenceDto
+import app.mami.data.SharedLocation
 import app.mami.data.db.MoodEntity
 import app.mami.ui.Format
 import app.mami.ui.components.Avatar
@@ -81,6 +83,8 @@ fun PartnerSheet(
     onMedia: (() -> Unit)? = null,
     mood: MoodEntity? = null,
     onTogether: (() -> Unit)? = null,
+    location: SharedLocation? = null,
+    onLocation: (() -> Unit)? = null,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -103,6 +107,9 @@ fun PartnerSheet(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                location?.takeIf { it.live(now) && onLocation != null }?.let { live ->
+                    LocationLine(name, live, now) { onLocation?.invoke() }
+                }
                 mood?.let { MoodCardLine(it, name, now) }
                 hints.filter { it.text != "Online now" }.forEach { hint -> HintCard(hint) }
 
@@ -213,6 +220,31 @@ private fun Hero(name: String, email: String, status: DeviceStatus?, presence: P
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.9f),
             )
+        }
+    }
+}
+
+@Composable
+private fun LocationLine(name: String, location: SharedLocation, now: Long, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = Mami.colors.good.copy(alpha = 0.12f),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(34.dp).clip(CircleShape).background(Mami.colors.good.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Mami.colors.good, modifier = Modifier.size(18.dp))
+            }
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text("$name is sharing live location", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Until ${Format.time(location.untilMs)} · updated ${Format.relative(location.atMs, now)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text("View", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         }
     }
 }

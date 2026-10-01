@@ -8,7 +8,7 @@ one went quiet.
   <img src="docs/screenshots/08-chat.png" width="200" alt="Chat">
   <img src="docs/screenshots/18-chat-media.png" width="200" alt="Photos, voice messages and files in the chat">
   <img src="docs/screenshots/25-call-ringing.png" width="200" alt="Calling: ringing on their phone">
-  <img src="docs/screenshots/29-together.png" width="200" alt="Together: days, next meeting, question of the day">
+  <img src="docs/screenshots/29-together.png" width="200" alt="Together: days together and the next meeting">
 </p>
 
 More in [`docs/screenshots/`](docs/screenshots). CI renders them from the
@@ -59,8 +59,6 @@ real Compose screens on every push.
   - **days together** since the day you set, and the countdown to your
     anniversary;
   - **the next time you'll meet**, counting down in days, hours and minutes;
-  - **a question of the day**, the same on both phones; you see your
-    partner's answer once you've answered too;
   - **mood check-ins** with a note, and the last seven days of both moods;
   - **love letters** on paper you pick, in handwriting, optionally sealed
     until a date; the envelope opens when it's read;
@@ -100,10 +98,9 @@ works with no server and no second phone.
     PDF or a link, react to your message, edit, unsend or pin hers;
   - have Maya call you (voice or video), hang up, drop her connection or
     turn her camera off;
-  - fill the Together page, and have Maya answer the question, check in a
-    mood, send a (sealed) letter, say she's home safe, share her live
-    location as she walks, schedule a surprise, pause sharing, drive or wake
-    up;
+  - fill the Together page, and have Maya check in a mood, send a (sealed)
+    letter, say she's home safe, share her live location as she walks,
+    schedule a surprise, pause sharing, drive or wake up;
   - change the colour theme and dark mode;
   - start over.
 

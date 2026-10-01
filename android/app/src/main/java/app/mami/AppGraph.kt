@@ -33,7 +33,7 @@ class AppGraph(context: Context) {
     val realtime = Realtime(settings, http, scope)
     val crypto = CryptoStore(File(context.filesDir, "crypto"), settings)
     val database = Room.databaseBuilder(context, MamiDatabase::class.java, "mami.db")
-        .addMigrations(MamiDatabase.MIGRATION_1_2, MamiDatabase.MIGRATION_2_3)
+        .addMigrations(MamiDatabase.MIGRATION_1_2, MamiDatabase.MIGRATION_2_3, MamiDatabase.MIGRATION_3_4)
         .build()
     val notifications = Notifications(context)
     val media = MediaLibrary(context)

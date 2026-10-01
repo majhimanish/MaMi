@@ -14,7 +14,6 @@ import app.mami.data.PresenceDto
 import app.mami.data.SavedQuickStatus
 import app.mami.data.SharedLocation
 import app.mami.data.TogetherInfo
-import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MoodEntity
 import app.mami.media.VoiceRecording
@@ -130,10 +129,6 @@ interface MamiBackend {
     /** The day you got together and the next time you'll meet. */
     val together: StateFlow<TogetherInfo>
     fun setTogether(key: TogetherKey, value: String?)
-
-    /** Daily question answers, newest day first. */
-    val answers: Flow<List<AnswerEntity>>
-    fun answerQuestion(text: String)
 
     /** Mood check-ins, both of you, newest first. */
     val moods: Flow<List<MoodEntity>>

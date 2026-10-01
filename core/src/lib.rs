@@ -10,7 +10,6 @@
 //!   they are uploaded, in chunks so big files never have to fit in memory.
 //! * [`insight`]: turns the partner's last known device status into
 //!   plain-language hints ("phone probably died", "probably asleep").
-//! * [`questions`]: the daily question, the same on both phones.
 //!
 //! The public API is exported to Kotlin and Swift with UniFFI.
 
@@ -18,13 +17,11 @@ pub mod attachment;
 pub mod crypto;
 pub mod insight;
 pub mod payload;
-pub mod questions;
 
 pub use attachment::*;
 pub use crypto::*;
 pub use insight::*;
 pub use payload::*;
-pub use questions::*;
 
 uniffi::setup_scaffolding!();
 

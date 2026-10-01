@@ -25,7 +25,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
@@ -34,7 +33,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,7 +52,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -66,14 +63,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mami.core.CheckInKind
 import app.mami.core.TogetherKey
-import app.mami.core.dailyQuestion
-import app.mami.core.questionDay
-import app.mami.core.questionText
 import app.mami.data.Moods
 import app.mami.data.PAUSED_INDEFINITELY
 import app.mami.data.SharedLocation
 import app.mami.data.TogetherInfo
-import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
 import app.mami.data.db.MoodEntity
@@ -95,7 +88,7 @@ import kotlinx.coroutines.delay
 
 /**
  * Everything that's just the two of you: days together, the next time
- * you'll meet, today's question, moods, letters, check-ins and live
+ * you'll meet, moods, letters, check-ins and live
  * location, scheduled messages and pausing sharing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,7 +96,6 @@ import kotlinx.coroutines.delay
 fun TogetherScreen(ui: UiController, partnerName: String, onBack: () -> Unit) {
     val backend = ui.backend
     val together by backend.together.collectAsStateWithLifecycle()
-    val answers by backend.answers.collectAsStateWithLifecycle(initialValue = emptyList())
     val moods by backend.moods.collectAsStateWithLifecycle(initialValue = emptyList())
     val messages by backend.messages.collectAsStateWithLifecycle(initialValue = emptyList())
     val statusPair by backend.partnerStatus.collectAsStateWithLifecycle()
@@ -145,7 +137,6 @@ fun TogetherScreen(ui: UiController, partnerName: String, onBack: () -> Unit) {
                 backend.setTogether(TogetherKey.NEXT_MEETING, at?.toString())
                 backend.setTogether(TogetherKey.NEXT_MEETING_LABEL, label?.trim()?.ifEmpty { null })
             })
-            QuestionCard(answers, partnerName, now, onAnswer = backend::answerQuestion)
             MoodCard(moods, partnerName, now, onMood = backend::setMood)
             LettersCard(letters, partnerName, now, onWrite = { ui.writingLetter = true }, onOpen = { ui.reading = it.id })
             SafeCard(partnerName, theirLocation, myLocationUntil, now, onCheckIn = backend::checkIn, onLocation = { ui.locationOpen = true })
@@ -374,91 +365,6 @@ private fun MeetingDialog(together: TogetherInfo, now: Long, onDismiss: () -> Un
                 picking = false
             },
         )
-    }
-}
-
-// ---- question of the day ------------------------------------------------------------------
-
-/** Today's question. Each of you sees the other's answer once you've both answered. */
-@Composable
-fun QuestionCard(answers: List<AnswerEntity>, partnerName: String, now: Long, onAnswer: (String) -> Unit) {
-    val day = questionDay(now)
-    val question = remember(day) { dailyQuestion(day) }
-    val today = answers.firstOrNull { it.day == day }
-    var draft by remember(day) { mutableStateOf("") }
-    TogetherCard("💭", "Question of the day") {
-        Text(question.text, style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(12.dp))
-        if (today?.mine == null) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                placeholder = { Text("Your answer…") },
-                shape = RoundedCornerShape(20.dp),
-                maxLines = 4,
-                trailingIcon = {
-                    IconButton(onClick = { onAnswer(draft) }, enabled = draft.isNotBlank()) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Answer")
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
-            if (today?.theirs != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) {
-                        AnswerBubble(partnerName, today.theirs, mine = false, hidden = true)
-                    }
-                }
-                Text(
-                    "🔒 $partnerName answered. Answer too to see what they said.",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            } else {
-                Text("$partnerName hasn't answered yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            AnswerBubble("You", today.mine, mine = true)
-            Spacer(Modifier.height(8.dp))
-            if (today.theirs != null) {
-                AnswerBubble(partnerName, today.theirs, mine = false)
-            } else {
-                Text("Waiting for $partnerName's answer…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        val earlier = answers.filter { it.day < day && it.mine != null && it.theirs != null }.take(3)
-        if (earlier.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(10.dp))
-            Text("Earlier", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            earlier.forEach { answer ->
-                Spacer(Modifier.height(8.dp))
-                Text(questionText(answer.questionId) ?: "", style = MaterialTheme.typography.titleSmall)
-                Text("You: ${answer.mine}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("$partnerName: ${answer.theirs}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AnswerBubble(who: String, text: String, mine: Boolean, hidden: Boolean = false) {
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
-        Text(who, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 6.dp))
-        Surface(
-            shape = RoundedCornerShape(20.dp, 20.dp, if (mine) 6.dp else 20.dp, if (mine) 20.dp else 6.dp),
-            color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-        ) {
-            Text(
-                // Hidden answers are blurred filler, never the real words.
-                if (hidden) "▒▒▒▒ ▒▒▒ ▒▒▒▒▒▒ ▒▒ ▒▒▒▒" else text,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp).then(if (hidden) Modifier.blur(4.dp) else Modifier),
-            )
-        }
     }
 }
 

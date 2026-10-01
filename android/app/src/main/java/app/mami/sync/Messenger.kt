@@ -20,12 +20,10 @@ import app.mami.core.NudgeKind
 import app.mami.core.Payload
 import app.mami.core.ShareKind
 import app.mami.core.TogetherKey
-import app.mami.core.dailyQuestion
 import app.mami.core.decryptFile
 import app.mami.core.encryptFile
 import app.mami.core.payloadFromJson
 import app.mami.core.payloadToJson
-import app.mami.core.questionDay
 import app.mami.core.verifyIdentity
 import app.mami.data.AcceptedDto
 import app.mami.data.Api
@@ -48,7 +46,6 @@ import app.mami.data.Settings
 import app.mami.data.SharedLocation
 import app.mami.data.TogetherInfo
 import app.mami.data.pausedIndefinitely
-import app.mami.data.db.AnswerEntity
 import app.mami.data.db.MamiDatabase
 import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
@@ -676,7 +673,6 @@ class Messenger(
     // ---- together ------------------------------------------------------------------------
 
     override val together: StateFlow<TogetherInfo> = settings.togetherFlow
-    override val answers: Flow<List<AnswerEntity>> = togetherDao.observeAnswers()
     override val moods: Flow<List<MoodEntity>> = togetherDao.observeMoods()
     override val partnerLocation: StateFlow<SharedLocation?> = settings.partnerLocationFlow
     override val myLocationUntil: StateFlow<Long?> = settings.locationUntilFlow
@@ -686,21 +682,6 @@ class Messenger(
         val now = System.currentTimeMillis()
         settings.together = applyTogether(settings.together, key, value, now)
         launchSafely { enqueue(Payload.Together(key, value, now)) }
-    }
-
-    override fun answerQuestion(text: String) {
-        val answer = text.trim()
-        if (answer.isEmpty()) return
-        val now = System.currentTimeMillis()
-        val day = questionDay(now)
-        val question = dailyQuestion(day)
-        launchSafely {
-            val existing = togetherDao.answer(day)
-            togetherDao.putAnswer(
-                existing?.copy(mine = answer, mineAtMs = now) ?: AnswerEntity(day, question.id, mine = answer, mineAtMs = now),
-            )
-            enqueue(Payload.Answer(day, question.id, answer, now))
-        }
     }
 
     override fun setMood(mood: String, note: String?) {
@@ -1410,17 +1391,6 @@ class Messenger(
                 settings.partnerLocation = settings.partnerLocation?.copy(ended = true)
             }
             is Payload.Together -> settings.together = applyTogether(settings.together, payload.key, payload.value, payload.updatedAtMs)
-            is Payload.Answer -> {
-                val existing = togetherDao.answer(payload.day)
-                togetherDao.putAnswer(
-                    existing?.copy(theirs = payload.text, theirsAtMs = payload.answeredAtMs)
-                        ?: AnswerEntity(payload.day, payload.questionId, theirs = payload.text, theirsAtMs = payload.answeredAtMs),
-                )
-                notifications.showTogether(
-                    "💭 $partnerName answered today's question",
-                    if (existing?.mine == null) "Answer it too to see what they said" else "See both answers",
-                )
-            }
             is Payload.Mood -> {
                 togetherDao.addMood(MoodEntity(payload.id, fromMe = false, mood = payload.mood, note = payload.note, atMs = payload.atMs))
                 notifications.showTogether(Moods.sentence(partnerName, payload.mood), payload.note ?: "Tap to say something sweet")
@@ -1589,7 +1559,6 @@ class Messenger(
         }
         dao.deleteAll()
         outbox.clear()
-        togetherDao.clearAnswers()
         togetherDao.clearMoods()
         media.clear()
         crypto.forgetSessions(null)

@@ -148,17 +148,6 @@ data class MessageEntity(
     fun hiddenUntil(now: Long): Boolean = scheduledAtMs != null && scheduledAtMs > now
 }
 
-/** One day's question and both answers. */
-@Entity(tableName = "answers")
-data class AnswerEntity(
-    @PrimaryKey val day: Long,
-    val questionId: String,
-    val mine: String? = null,
-    val mineAtMs: Long? = null,
-    val theirs: String? = null,
-    val theirsAtMs: Long? = null,
-)
-
 /** A mood check-in, mine or theirs. */
 @Entity(tableName = "moods")
 data class MoodEntity(
@@ -315,23 +304,11 @@ interface MessageDao {
 
 @Dao
 interface TogetherDao {
-    @Query("SELECT * FROM answers ORDER BY day DESC")
-    fun observeAnswers(): Flow<List<AnswerEntity>>
-
-    @Query("SELECT * FROM answers WHERE day = :day")
-    suspend fun answer(day: Long): AnswerEntity?
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun putAnswer(answer: AnswerEntity)
-
     @Query("SELECT * FROM moods ORDER BY atMs DESC LIMIT 200")
     fun observeMoods(): Flow<List<MoodEntity>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addMood(mood: MoodEntity)
-
-    @Query("DELETE FROM answers")
-    suspend fun clearAnswers()
 
     @Query("DELETE FROM moods")
     suspend fun clearMoods()
@@ -352,7 +329,7 @@ interface OutboxDao {
     suspend fun clear()
 }
 
-@Database(entities = [MessageEntity::class, OutboxEntity::class, AnswerEntity::class, MoodEntity::class], version = 3, exportSchema = false)
+@Database(entities = [MessageEntity::class, OutboxEntity::class, MoodEntity::class], version = 4, exportSchema = false)
 abstract class MamiDatabase : RoomDatabase() {
     abstract fun messages(): MessageDao
     abstract fun outbox(): OutboxDao
@@ -380,7 +357,7 @@ abstract class MamiDatabase : RoomDatabase() {
             }
         }
 
-        /** Scheduled messages, letters, check-ins, live location, daily answers and moods. */
+        /** Scheduled messages, letters, check-ins, live location and moods. */
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 listOf(
@@ -388,13 +365,16 @@ abstract class MamiDatabase : RoomDatabase() {
                     "untilMs INTEGER", "endedAtMs INTEGER",
                 ).forEach { db.execSQL("ALTER TABLE messages ADD COLUMN $it") }
                 db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS answers (day INTEGER NOT NULL, questionId TEXT NOT NULL, mine TEXT, " +
-                        "mineAtMs INTEGER, theirs TEXT, theirsAtMs INTEGER, PRIMARY KEY(day))",
-                )
-                db.execSQL(
                     "CREATE TABLE IF NOT EXISTS moods (id TEXT NOT NULL, fromMe INTEGER NOT NULL, mood TEXT NOT NULL, " +
                         "note TEXT, atMs INTEGER NOT NULL, PRIMARY KEY(id))",
                 )
+            }
+        }
+
+        /** The question of the day was dropped; test builds at version 3 had its table. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS answers")
             }
         }
     }

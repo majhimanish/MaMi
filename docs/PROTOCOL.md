@@ -68,7 +68,6 @@ encryption. Kinds (`t`):
 | `call_offer`, `call_answer` | WebRTC session descriptions | call |
 | `call_ringing`, `call_candidates`, `call_media`, `call_end` | ringing, network paths, camera/mute, hang up / declined / busy / no answer | call |
 | `together` | a shared value: the day you got together, the next meeting time or its label; each carries `updated_at_ms` and the newest wins | message |
-| `answer` | my answer to the question of the day (`day`, `question_id`, `text`) | message |
 | `mood` | a mood check-in: an emoji and an optional note | message |
 | `letter` | a love letter: `title`, `body`, `paper`, optional `open_at_ms` (sealed until then) | message |
 | `check_in` | home safe / leaving now / arrived | message |
@@ -88,9 +87,6 @@ guessing), `auto_status` (a status the phone set itself, like driving) and
 `woke_at_ms` (first use of the phone this morning). Pausing is two-way like
 everything else: while I've paused, my app doesn't show the partner's phone
 either.
-
-The question of the day comes from a fixed list in the core library, picked
-by the UTC day number, so both phones agree without asking the server.
 
 Unknown kinds and enum values decode as `unknown` and are ignored, so newer
 apps can add features without breaking older ones.

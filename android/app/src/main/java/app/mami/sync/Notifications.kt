@@ -52,7 +52,7 @@ class Notifications(private val context: Context) {
                     setSound(null, null)
                 },
                 NotificationChannel(CHANNEL_TOGETHER, "Together", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Daily question answers and moods"
+                    description = "Your partner's moods"
                 },
                 NotificationChannel(CHANNEL_LOCATION, "Sharing location", NotificationManager.IMPORTANCE_LOW).apply {
                     description = "Shown while you share your live location"
@@ -181,7 +181,7 @@ class Notifications(private val context: Context) {
 
     fun clearConversation() = manager.cancel(ID_CONVERSATION)
 
-    /** The partner answered today's question or checked in a mood. */
+    /** The partner checked in a mood. */
     @SuppressLint("MissingPermission") // checked by allowed()
     fun showTogether(title: String, text: String) {
         if (!allowed()) return

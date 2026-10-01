@@ -17,7 +17,6 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,34 +33,19 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Battery2Bar
-import androidx.compose.material.icons.filled.Battery4Bar
-import androidx.compose.material.icons.filled.Battery6Bar
-import androidx.compose.material.icons.filled.BatteryAlert
-import androidx.compose.material.icons.filled.BatteryChargingFull
-import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -102,14 +86,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mami.core.DeviceStatus
-import app.mami.core.NetworkKind
-import app.mami.core.RingerMode
 import app.mami.data.ConnectionState
-import app.mami.data.Moods
-import app.mami.data.SharedLocation
-import app.mami.data.TogetherInfo
-import app.mami.data.db.MoodEntity
-import app.mami.data.pausedIndefinitely
 import app.mami.data.PresenceDto
 import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
@@ -120,9 +97,6 @@ import app.mami.ui.Overlay
 import app.mami.ui.UiController
 import app.mami.ui.components.Avatar
 import app.mami.ui.components.HeartBurst
-import app.mami.ui.components.SignalBars
-import app.mami.ui.components.StatusPill
-import app.mami.ui.components.batteryColor
 import app.mami.ui.call.rememberCallStarter
 import app.mami.ui.components.heartWallpaper
 import app.mami.ui.theme.Mami
@@ -132,10 +106,7 @@ import app.mami.ui.together.LiveLocationCard
 import app.mami.ui.together.ScheduledBar
 import app.mami.ui.together.ScheduledSheet
 import app.mami.ui.together.partnerZone
-import app.mami.ui.together.timeIn
-import java.time.LocalDate
 import java.time.ZoneId
-import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -144,9 +115,6 @@ private const val GROUP_GAP_MS = 5 * 60_000L
 
 /** A mood is news for half a day. */
 private const val MOOD_FRESH_MS = 12 * 60 * 60_000L
-
-/** "Up since 7:12" shows for a few hours. */
-private const val WOKE_FRESH_MS = 4 * 60 * 60_000L
 
 @Composable
 fun ChatScreen(ui: UiController) {
@@ -164,7 +132,6 @@ fun ChatScreen(ui: UiController) {
     val connection by backend.connection.collectAsStateWithLifecycle()
     val progress by backend.transferProgress.collectAsStateWithLifecycle()
     val moods by backend.moods.collectAsStateWithLifecycle(initialValue = emptyList())
-    val together by backend.together.collectAsStateWithLifecycle()
     val theirLocation by backend.partnerLocation.collectAsStateWithLifecycle()
     val pausedUntil by backend.sharingPausedUntil.collectAsStateWithLifecycle()
     // Ticks every half minute, and exactly when the next scheduled message is due.
@@ -298,14 +265,12 @@ fun ChatScreen(ui: UiController) {
                             typing = typing,
                             hint = hints.firstOrNull(),
                             now = now,
-                            extras = StripExtras(together, theirMood, theirLocation, pausedUntil),
                             onOpenPartner = { ui.partnerSheetOpen = true },
                             onCall = startCall,
                             onSearch = { searching = true },
                             onMedia = { ui.overlay = Overlay.Media },
                             onStarred = { ui.overlay = Overlay.Starred },
                             onTogether = { ui.overlay = Overlay.Together },
-                            onLocation = { ui.locationOpen = true },
                             onSettings = { ui.overlay = Overlay.Settings },
                         )
                     }
@@ -406,6 +371,11 @@ fun ChatScreen(ui: UiController) {
                 ui.partnerSheetOpen = false
                 ui.overlay = Overlay.Together
             },
+            location = theirLocation,
+            onLocation = {
+                ui.partnerSheetOpen = false
+                ui.locationOpen = true
+            },
         )
     }
     details?.let { message -> MessageDetailsSheet(message, name) { details = null } }
@@ -464,14 +434,12 @@ private fun ChatTopBar(
     typing: Boolean,
     hint: Hint?,
     now: Long,
-    extras: StripExtras,
     onOpenPartner: () -> Unit,
     onCall: (video: Boolean) -> Unit,
     onSearch: () -> Unit,
     onMedia: () -> Unit,
     onStarred: () -> Unit,
     onTogether: () -> Unit,
-    onLocation: () -> Unit,
     onSettings: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -566,18 +534,9 @@ private fun ChatTopBar(
                     }
                 }
             }
-            StatusStrip(status, now, extras, onOpenPartner, onTogether, onLocation)
         }
     }
 }
-
-/** What else the strip under the name shows: days together, their mood, live location, a pause. */
-data class StripExtras(
-    val together: TogetherInfo,
-    val mood: MoodEntity?,
-    val location: SharedLocation?,
-    val myPauseUntil: Long?,
-)
 
 /** The newest pinned message, under the top bar. With several, a tap cycles through them. */
 @Composable
@@ -613,113 +572,6 @@ private fun PinnedBar(messages: List<MessageEntity>, partnerName: String, onJump
                 }
             }
         }
-    }
-}
-
-fun batteryIcon(percent: Int?, charging: Boolean): ImageVector = when {
-    percent == null -> Icons.Filled.BatteryFull
-    charging -> Icons.Filled.BatteryChargingFull
-    percent <= 15 -> Icons.Filled.BatteryAlert
-    percent <= 40 -> Icons.Filled.Battery2Bar
-    percent <= 70 -> Icons.Filled.Battery4Bar
-    percent <= 90 -> Icons.Filled.Battery6Bar
-    else -> Icons.Filled.BatteryFull
-}
-
-/** Everything about the partner's phone at a glance, in one swipeable row. */
-@Composable
-private fun StatusStrip(status: DeviceStatus?, now: Long, extras: StripExtras, onClick: () -> Unit, onTogether: () -> Unit, onLocation: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        val since = extras.together.since?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        val today = LocalDate.now(ZoneId.systemDefault())
-        StatusPill(
-            null,
-            if (since != null && !since.isAfter(today)) "💞 ${"%,d".format(ChronoUnit.DAYS.between(since, today))} days" else "💞 Together",
-            tint = Mami.colors.gradient.first(),
-            onClick = onTogether,
-        )
-        if (extras.location?.live(now) == true) {
-            StatusPill(null, "📍 Live location", tint = Mami.colors.good, onClick = onLocation)
-        }
-        extras.mood?.let { mood ->
-            StatusPill(null, "${mood.mood} ${Moods.of(mood.mood)?.label ?: "Mood"}", tint = MaterialTheme.colorScheme.tertiary, onClick = onTogether)
-        }
-        extras.myPauseUntil?.takeIf { it > now }?.let { until ->
-            StatusPill(
-                null,
-                if (pausedIndefinitely(until)) "⏸ You paused sharing" else "⏸ You paused until ${Format.time(until)}",
-                tint = Mami.colors.warn,
-                onClick = onTogether,
-            )
-        }
-        if (status != null) StatusChips(status, now, onClick)
-    }
-}
-
-@Composable
-private fun StatusChips(status: DeviceStatus, now: Long, onClick: () -> Unit) {
-    status.pausedUntilMs?.takeIf { it > now }?.let { until ->
-        StatusPill(
-            null,
-            "⏸ Sharing paused" + if (pausedIndefinitely(until)) "" else " until ${Format.time(until)}",
-            tint = Mami.colors.warn,
-            onClick = onClick,
-        )
-    }
-    status.quickStatus?.takeIf { it.untilMs == null || it.untilMs!! > now }?.let { quick ->
-        StatusPill(null, "${quick.emoji} ${quick.label}", tint = MaterialTheme.colorScheme.secondary, onClick = onClick)
-    }
-    if (status.quickStatus?.takeIf { it.untilMs == null || it.untilMs!! > now } == null) {
-        status.autoStatus?.takeIf { it.untilMs == null || it.untilMs!! > now }?.let { auto ->
-            StatusPill(null, "${auto.emoji} ${auto.label}", tint = MaterialTheme.colorScheme.secondary, onClick = onClick)
-        }
-    }
-    status.wokeAtMs?.takeIf { now - it in 0 until WOKE_FRESH_MS }?.let { woke ->
-        StatusPill(null, "☀️ Up since ${timeIn(woke, partnerZone(status) ?: ZoneId.systemDefault())}", tint = Mami.colors.warn, onClick = onClick)
-    }
-    status.batteryPercent?.let { percent ->
-        val charging = status.charging == true
-        StatusPill(
-            batteryIcon(percent, charging),
-            if (charging) "$percent% · charging" else "$percent%",
-            tint = batteryColor(percent, charging),
-            onClick = onClick,
-        )
-    }
-    status.network?.let { network ->
-        val (icon, label) = when (network) {
-            NetworkKind.WIFI -> Icons.Filled.Wifi to "Wi-Fi"
-            NetworkKind.CELLULAR -> Icons.Filled.SignalCellularAlt to "Mobile data"
-            NetworkKind.ETHERNET -> Icons.Filled.Wifi to "Cable"
-            NetworkKind.OFFLINE -> Icons.Filled.WifiOff to "Offline"
-            NetworkKind.OTHER -> Icons.Filled.Wifi to "Online"
-        }
-        StatusPill(
-            icon,
-            label,
-            tint = if (network == NetworkKind.OFFLINE) Mami.colors.bad else MaterialTheme.colorScheme.primary,
-            trailing = status.signalLevel?.let { level -> @Composable { SignalBars(level) } },
-            onClick = onClick,
-        )
-    }
-    if (status.doNotDisturb == true || status.ringer != null) {
-        val (icon, label) = when {
-            status.doNotDisturb == true -> Icons.Filled.DoNotDisturbOn to "Do Not Disturb"
-            status.ringer == RingerMode.SILENT -> Icons.Filled.NotificationsOff to "Silent"
-            status.ringer == RingerMode.VIBRATE -> Icons.Filled.Vibration to "Vibrate"
-            else -> Icons.AutoMirrored.Filled.VolumeUp to "Ringer on"
-        }
-        val quiet = status.doNotDisturb == true || status.ringer == RingerMode.SILENT || status.ringer == RingerMode.VIBRATE
-        StatusPill(icon, label, tint = if (quiet) Mami.colors.warn else MaterialTheme.colorScheme.primary, onClick = onClick)
-    }
-    partnerLocalTime(status, now)?.let { time ->
-        StatusPill(Icons.Filled.Schedule, "$time there", tint = MaterialTheme.colorScheme.tertiary, onClick = onClick)
     }
 }
 

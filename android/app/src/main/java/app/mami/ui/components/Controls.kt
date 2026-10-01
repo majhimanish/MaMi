@@ -276,15 +276,5 @@ fun ErrorMessage(error: String?) {
     }
 }
 
-/** A small "or" between two choices. */
-@Composable
-fun OrDivider() {
-    Row(Modifier.fillMaxWidth().padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.weight(1f).height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-        Text("  or  ", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Box(Modifier.weight(1f).height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-    }
-}
-
 @Composable
 fun VerticalSpace(height: Int) = Spacer(Modifier.height(height.dp))
