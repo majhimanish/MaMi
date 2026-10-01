@@ -345,6 +345,14 @@ fun ChatScreen(ui: UiController) {
                 burst++
             },
             onDismiss = { ui.partnerSheetOpen = false },
+            onCall = { video ->
+                ui.partnerSheetOpen = false
+                startCall(video)
+            },
+            onMedia = {
+                ui.partnerSheetOpen = false
+                ui.overlay = Overlay.Media
+            },
         )
     }
     details?.let { message -> MessageDetailsSheet(message, name) { details = null } }

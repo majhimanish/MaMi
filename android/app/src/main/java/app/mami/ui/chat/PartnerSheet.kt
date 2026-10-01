@@ -19,6 +19,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PermMedia
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -69,6 +72,8 @@ fun PartnerSheet(
     now: Long,
     onNudge: (NudgeKind) -> Unit,
     onDismiss: () -> Unit,
+    onCall: ((video: Boolean) -> Unit)? = null,
+    onMedia: (() -> Unit)? = null,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -79,6 +84,16 @@ fun PartnerSheet(
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
             Hero(name, email, status, presence, now)
             Column(Modifier.padding(horizontal = 18.dp)) {
+                if (onCall != null || onMedia != null) {
+                    Spacer(Modifier.height(16.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        onCall?.let { call ->
+                            QuickAction(Icons.Filled.Call, "Call", Modifier.weight(1f)) { call(false) }
+                            QuickAction(Icons.Filled.Videocam, "Video", Modifier.weight(1f)) { call(true) }
+                        }
+                        onMedia?.let { QuickAction(Icons.Filled.PermMedia, "Media", Modifier.weight(1f), it) }
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 hints.filter { it.text != "Online now" }.forEach { hint -> HintCard(hint) }
 
@@ -281,6 +296,17 @@ private fun TimeTile(status: DeviceStatus, now: Long, modifier: Modifier) {
         modifier,
     ) {
         if (hm != null) MiniClock(hm.first, hm.second) else Text("🌍", fontSize = 40.sp)
+    }
+}
+
+@Composable
+private fun QuickAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHighest, modifier = modifier) {
+        Column(Modifier.padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(4.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 

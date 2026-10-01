@@ -198,24 +198,18 @@ fun CallScreen(ui: UiController, calls: Calls, call: CallState) {
             .pointerInput(Unit) { detectTapGestures(onTap = { controls = !controls }) },
     ) {
         val partnerVideo = showVideo && active && call.partnerCameraOn
+        val ringing = call.phase == CallPhase.Incoming || call.phase == CallPhase.Ringing || call.phase == CallPhase.Calling
         if (partnerVideo) {
             VideoSurface(calls, remote = true, Modifier.fillMaxSize())
-        } else {
-            if (call.phase == CallPhase.Incoming || call.phase == CallPhase.Ringing) FloatingHearts()
-            Column(
-                Modifier.fillMaxSize().padding(top = if (inPip) 8.dp else 120.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Pulse(enabled = call.phase == CallPhase.Incoming || call.phase == CallPhase.Ringing || call.phase == CallPhase.Calling) {
-                    Avatar(name, size = if (inPip) 64.dp else 132.dp, battery = status?.batteryPercent, charging = status?.charging == true)
-                }
-                if (call.video && active && !call.partnerCameraOn && !inPip) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("$name turned the camera off", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodyMedium)
-                }
-            }
+        } else if (ringing) {
+            FloatingHearts()
         }
-        if (inPip) return@Box
+        if (inPip) {
+            if (!partnerVideo) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(name, size = 64.dp) }
+            }
+            return@Box
+        }
 
         // Who and what's happening, at the top.
         AnimatedVisibility(visible = controls || !partnerVideo, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
@@ -231,7 +225,15 @@ fun CallScreen(ui: UiController, calls: Calls, call: CallState) {
                     Icon(Icons.Filled.Lock, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(13.dp))
                     Text(" End-to-end encrypted", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
                 }
-                Spacer(Modifier.height(if (partnerVideo) 6.dp else 190.dp))
+                if (partnerVideo) {
+                    Spacer(Modifier.height(6.dp))
+                } else {
+                    Spacer(Modifier.height(64.dp))
+                    Pulse(enabled = ringing) {
+                        Avatar(name, size = 132.dp, battery = status?.batteryPercent, charging = status?.charging == true)
+                    }
+                    Spacer(Modifier.height(28.dp))
+                }
                 Text(name, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(4.dp))
                 AnimatedContent(phaseText(call, name), transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "phase") { text ->
@@ -240,6 +242,10 @@ fun CallScreen(ui: UiController, calls: Calls, call: CallState) {
                 partnerPhoneLine(status, name)?.let { line ->
                     Spacer(Modifier.height(6.dp))
                     Text(line, color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                }
+                if (call.video && active && !call.partnerCameraOn) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("$name's camera is off", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodyMedium)
                 }
                 if (call.partnerMuted && active) {
                     Spacer(Modifier.height(6.dp))
