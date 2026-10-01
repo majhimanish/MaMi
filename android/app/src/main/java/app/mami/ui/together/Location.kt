@@ -57,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -175,7 +176,7 @@ private fun MapTile(live: Boolean, modifier: Modifier) {
     val water = if (Mami.colors.isDark) Color(0xFF1D3B52) else Color(0xFFBFE0F5)
     val pin = if (live) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     val pulse by rememberInfiniteTransition(label = "pin").animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "pulse")
-    Box(modifier.background(land), contentAlignment = Alignment.Center) {
+    Box(modifier.clipToBounds().background(land), contentAlignment = Alignment.Center) {
         Canvas(Modifier.matchParentSize()) {
             drawCircle(water, radius = size.height * 0.9f, center = Offset(size.width * 0.05f, size.height * 1.1f))
             val w = size.height * 0.11f
@@ -310,11 +311,12 @@ fun LocationView(theirs: SharedLocation?, me: Pair<Double, Double>?, partnerName
                     )
                 }
                 Text(
-                    listOfNotNull(moving, "updated ${Format.relative(theirs.atMs, now)}", "until ${Format.time(theirs.untilMs)}").joinToString(" · "),
+                    listOfNotNull(moving, "updated ${Format.relative(theirs.atMs, now)}").joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Text("Sharing until ${Format.time(theirs.untilMs)}", style = MaterialTheme.typography.bodySmall, color = Mami.colors.good)
         }
         Button(onClick = { onOpenMaps(theirs) }) {
             Icon(Icons.Filled.Map, contentDescription = null, modifier = Modifier.size(18.dp))

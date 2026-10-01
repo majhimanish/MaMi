@@ -97,7 +97,7 @@ fun LetterCard(message: MessageEntity, partnerName: String, now: Long, onOpen: (
     val sealed = message.isSealed(now)
     val status = when {
         message.unsent -> "Unsent"
-        sealed -> "Opens ${whenIn(message.unlockAtMs!!, ZoneId.systemDefault(), now)}"
+        sealed -> "Opens ${whenIn(message.unlockAtMs!!, ZoneId.systemDefault(), now, capitalize = false)}"
         message.fromMe && message.openedAtMs != null -> "Opened by $partnerName · ${Format.time(message.openedAtMs)}"
         message.fromMe && message.state >= MessageState.DELIVERED -> "Delivered · not opened yet"
         message.fromMe -> "Sending…"
@@ -189,7 +189,7 @@ fun LetterReader(message: MessageEntity, partnerName: String, now: Long, onOpene
                         Text(message.title ?: "A love letter", style = letterStyle(paper, 30), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Sealed until ${whenIn(message.unlockAtMs!!, ZoneId.systemDefault(), now)}",
+                            "Sealed until ${untilIn(message.unlockAtMs!!, ZoneId.systemDefault(), now)}",
                             style = MaterialTheme.typography.labelLarge,
                             color = paper.ink.copy(alpha = 0.75f),
                         )

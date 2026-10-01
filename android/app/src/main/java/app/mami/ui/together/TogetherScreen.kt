@@ -309,8 +309,10 @@ fun MeetingCard(together: TogetherInfo, now: Long, onSet: (Long?, String?) -> Un
                 Spacer(Modifier.height(12.dp))
                 val minutes = (meeting - now) / 60_000
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CountdownBox(minutes / (24 * 60), "days", Modifier.weight(1f))
-                    CountdownBox((minutes / 60) % 24, "hours", Modifier.weight(1f))
+                    val days = minutes / (24 * 60)
+                    val hours = (minutes / 60) % 24
+                    CountdownBox(days, if (days == 1L) "day" else "days", Modifier.weight(1f))
+                    CountdownBox(hours, if (hours == 1L) "hour" else "hours", Modifier.weight(1f))
                     CountdownBox(minutes % 60, "min", Modifier.weight(1f))
                 }
             }
@@ -691,7 +693,7 @@ fun PauseCard(paused: Long?, partnerName: String, now: Long, onPause: (Long?) ->
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Lock, contentDescription = null, tint = Mami.colors.warn)
                     Text(
-                        if (pausedIndefinitely(active)) "Paused until you turn it back on" else "Paused until ${whenIn(active, ZoneId.systemDefault(), now)}",
+                        if (pausedIndefinitely(active)) "Paused until you turn it back on" else "Paused until ${untilIn(active, ZoneId.systemDefault(), now)}",
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(start = 10.dp),
                     )

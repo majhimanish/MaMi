@@ -350,7 +350,8 @@ fun ChatScreen(ui: UiController) {
                         )
                     }
                     PinnedBar(shown, name) { ui.jumpTo = it }
-                    if (scheduled.isNotEmpty()) ScheduledBar(scheduled, partnerZone(status) ?: ZoneId.systemDefault(), now) { scheduledOpen = true }
+                    // On my clock here; the sheet shows both.
+                    if (scheduled.isNotEmpty()) ScheduledBar(scheduled, ZoneId.systemDefault(), now) { scheduledOpen = true }
                     Conversation(
                         ui = ui,
                         messages = shown,

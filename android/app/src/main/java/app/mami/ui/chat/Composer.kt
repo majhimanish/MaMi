@@ -436,7 +436,7 @@ fun Composer(ui: UiController, state: ComposerState, partnerName: String, partne
             onSchedule = { at ->
                 scheduling = false
                 send(deliverAt = at)
-                Toast.makeText(context, "Scheduled for ${whenIn(at, partnerZone ?: ZoneId.systemDefault(), now)}" + if (partnerZone != null) " their time" else "", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Scheduled for ${whenIn(at, partnerZone ?: ZoneId.systemDefault(), now, capitalize = false)}" + if (partnerZone != null) " their time" else "", Toast.LENGTH_SHORT).show()
             },
         )
     }

@@ -79,17 +79,28 @@ fun zoneName(zone: ZoneId): String = when (zone) {
 /** "7:12 AM" on the clock of [zone]. */
 fun timeIn(ms: Long, zone: ZoneId): String = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(Instant.ofEpochMilli(ms).atZone(zone))
 
-/** "9:00 PM", "Tomorrow, 8:00 AM" or "Sat 4 Oct, 8:00 AM", on the clock of [zone]. */
-fun whenIn(ms: Long, zone: ZoneId, now: Long): String {
+/**
+ * "Today, 9:00 PM", "Tomorrow, 8:00 AM" or "Sat 4 Oct, 8:00 AM", on the
+ * clock of [zone]; lower case to go in the middle of a sentence.
+ */
+fun whenIn(ms: Long, zone: ZoneId, now: Long, capitalize: Boolean = true): String {
     val at = Instant.ofEpochMilli(ms).atZone(zone)
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val time = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(at)
     return when (at.toLocalDate()) {
-        today -> "Today, $time"
-        today.plusDays(1) -> "Tomorrow, $time"
+        today -> (if (capitalize) "Today" else "today") + ", $time"
+        today.plusDays(1) -> (if (capitalize) "Tomorrow" else "tomorrow") + ", $time"
         else -> DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault()).format(at) + ", $time"
     }
 }
+
+/** For "until …": "10:30 AM" today, "tomorrow, 8:00 AM", "Sat 4 Oct, 8:00 AM". */
+fun untilIn(ms: Long, zone: ZoneId, now: Long): String =
+    if (Instant.ofEpochMilli(ms).atZone(zone).toLocalDate() == Instant.ofEpochMilli(now).atZone(zone).toLocalDate()) {
+        timeIn(ms, zone)
+    } else {
+        whenIn(ms, zone, now, capitalize = false)
+    }
 
 /** "In 2 days 3 hrs", "in 45 min". */
 fun countdown(ms: Long, now: Long): String {
@@ -207,16 +218,16 @@ fun ScheduleSheet(
 @Composable
 private fun ScheduleRow(title: String, time: String, yours: String?, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 11.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Filled.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         Column(Modifier.weight(1f).padding(start = 14.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(time, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (yours != null) {
-            Text(yours, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+            if (yours != null) {
+                Text(yours, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+            }
         }
     }
 }
@@ -291,7 +302,7 @@ fun ScheduledBar(scheduled: List<MessageEntity>, zone: ZoneId, now: Long, onClic
         ) {
             Icon(Icons.Filled.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp))
             Text(
-                (if (scheduled.size == 1) "1 scheduled message" else "${scheduled.size} scheduled messages") + " · next ${whenIn(next, zone, now)}",
+                (if (scheduled.size == 1) "1 scheduled message" else "${scheduled.size} scheduled messages") + " · next ${whenIn(next, zone, now, capitalize = false)}",
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f).padding(start = 10.dp),
                 maxLines = 1,
@@ -316,14 +327,13 @@ fun ScheduledList(scheduled: List<MessageEntity>, partnerName: String, partnerZo
                         Text(message.body, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            if (twoClocks) {
-                                "${whenIn(at, partnerZone!!, now)} for $partnerName · ${whenIn(at, mine, now)} for you"
-                            } else {
-                                whenIn(at, mine, now)
-                            },
+                            if (twoClocks) "${whenIn(at, partnerZone!!, now)} for $partnerName" else whenIn(at, mine, now),
                             style = MaterialTheme.typography.labelMedium,
                             color = Mami.colors.gradient.last(),
                         )
+                        if (twoClocks) {
+                            Text("${whenIn(at, mine, now)} for you", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = { onCancel(message.id) }) { Icon(Icons.Filled.Close, contentDescription = "Cancel scheduled message") }
