@@ -369,6 +369,6 @@ private fun PaletteSwatch(palette: Palette, selected: Boolean, onClick: () -> Un
             if (selected) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = Color.White)
         }
         Spacer(Modifier.height(4.dp))
-        Text("${palette.emoji} ${palette.label}", style = MaterialTheme.typography.labelMedium)
+        Text(palette.label, style = MaterialTheme.typography.labelMedium)
     }
 }

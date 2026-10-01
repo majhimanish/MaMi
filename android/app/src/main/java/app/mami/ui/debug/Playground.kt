@@ -227,7 +227,7 @@ fun Playground(controller: AppController, onDismiss: () -> Unit) {
                         FilterChip(
                             selected = controller.appearance.palette == palette,
                             onClick = { controller.changeAppearance(controller.appearance.copy(palette = palette)) },
-                            label = { Text("${palette.emoji} ${palette.label}") },
+                            label = { Text(palette.label) },
                         )
                     }
                 }

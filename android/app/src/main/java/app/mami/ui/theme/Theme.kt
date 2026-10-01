@@ -29,20 +29,19 @@ import app.mami.R
 /** The colour themes people can pick in Settings. */
 enum class Palette(
     val label: String,
-    val emoji: String,
     internal val hue: Float,
     internal val secondaryHue: Float,
     internal val tertiaryHue: Float,
     val gradient: List<Color>,
 ) {
-    ROSE("Rose", "🌹", 336f, 285f, 18f, listOf(Color(0xFFFF4F8B), Color(0xFFD12FB4), Color(0xFF9B30FF))),
-    LAVENDER("Lavender", "💜", 265f, 320f, 195f, listOf(Color(0xFF8E7CFF), Color(0xFFB36BFF), Color(0xFFE76BD8))),
-    OCEAN("Ocean", "🌊", 205f, 175f, 330f, listOf(Color(0xFF00C6FB), Color(0xFF2E8BFF), Color(0xFF5B5BFF))),
-    SUNSET("Sunset", "🌅", 16f, 340f, 45f, listOf(Color(0xFFFFA25F), Color(0xFFFF5F6D), Color(0xFFD9468F))),
-    MINT("Mint", "🌿", 162f, 195f, 330f, listOf(Color(0xFF2BD9A5), Color(0xFF14B8A6), Color(0xFF0E8FB5))),
+    ROSE("Rose", 336f, 285f, 18f, listOf(Color(0xFFFF4F8B), Color(0xFFD12FB4), Color(0xFF9B30FF))),
+    LAVENDER("Lavender", 265f, 320f, 195f, listOf(Color(0xFF8E7CFF), Color(0xFFB36BFF), Color(0xFFE76BD8))),
+    OCEAN("Ocean", 205f, 175f, 330f, listOf(Color(0xFF00C6FB), Color(0xFF2E8BFF), Color(0xFF5B5BFF))),
+    SUNSET("Sunset", 16f, 340f, 45f, listOf(Color(0xFFFFA25F), Color(0xFFFF5F6D), Color(0xFFD9468F))),
+    MINT("Mint", 162f, 195f, 330f, listOf(Color(0xFF2BD9A5), Color(0xFF14B8A6), Color(0xFF0E8FB5))),
 
     /** Material You colours from the wallpaper (Android 12+). */
-    WALLPAPER("Wallpaper", "🎨", 336f, 285f, 18f, emptyList()),
+    WALLPAPER("Wallpaper", 336f, 285f, 18f, emptyList()),
 }
 
 enum class DarkMode(val label: String) { SYSTEM("Auto"), LIGHT("Light"), DARK("Dark") }

@@ -111,7 +111,6 @@ import app.mami.ui.components.Avatar
 import app.mami.ui.components.HeartBurst
 import app.mami.ui.components.SignalBars
 import app.mami.ui.components.StatusPill
-import app.mami.ui.components.TypingDots
 import app.mami.ui.components.batteryColor
 import app.mami.ui.components.heartWallpaper
 import app.mami.ui.theme.Mami
@@ -290,10 +289,13 @@ private fun ChatTopBar(
                     Text(name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     AnimatedContent(typing, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "subtitle") { isTyping ->
                         if (isTyping) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(20.dp)) {
-                                TypingDots(color = MaterialTheme.colorScheme.primary, dotSize = 5.dp)
-                                Text("  typing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                            }
+                            // The dots already bounce in the chat; up here, words are enough.
+                            Text(
+                                "typing",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.height(20.dp),
+                            )
                         } else {
                             Text(
                                 hint?.text ?: "Tap to see how they're doing",

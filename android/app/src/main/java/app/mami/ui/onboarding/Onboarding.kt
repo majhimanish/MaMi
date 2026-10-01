@@ -98,13 +98,17 @@ import app.mami.ui.components.ToggleRow
 import app.mami.ui.theme.Mami
 import kotlinx.coroutines.launch
 
-/** Aurora background, a back button, a debug "Skip" and a centred scrolling column. */
+/**
+ * Aurora background, a back button (or any other [topStart] action), a debug "Skip"
+ * and a centred scrolling column.
+ */
 @Composable
 fun OnboardingScaffold(
     ui: UiController,
     stage: Stage?,
     onBack: (() -> Unit)? = null,
     hearts: Boolean = false,
+    topStart: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     AuroraBackground {
@@ -116,6 +120,8 @@ fun OnboardingScaffold(
             ) {
                 if (onBack != null) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                } else {
+                    topStart?.invoke()
                 }
                 Spacer(Modifier.weight(1f))
                 if (ui.canSkip && stage != null) {

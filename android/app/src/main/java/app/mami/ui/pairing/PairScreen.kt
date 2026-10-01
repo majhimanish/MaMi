@@ -11,19 +11,20 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -80,7 +81,7 @@ private fun ChooseHowToPair(ui: UiController) {
     var partnerEmail by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
 
-    OnboardingScaffold(ui, Stage.Pair) {
+    OnboardingScaffold(ui, Stage.Pair, topStart = { SignOutButton(ui) }) {
         ScreenTitle("💞", "Link with your person", "One of you creates an invite, the other enters the code. Then it's just the two of you.")
 
         GlassCard {
@@ -138,8 +139,6 @@ private fun ChooseHowToPair(ui: UiController) {
         }
         ErrorMessage(ui.error)
         DemoHint(ui, "Demo mode: any 8-character code links you with Maya.")
-        Spacer(Modifier.height(20.dp))
-        SignedInAs(ui)
     }
 }
 
@@ -156,7 +155,7 @@ private fun WaitingForPartner(ui: UiController, invite: InviteDto) {
         label = "scale",
     )
 
-    OnboardingScaffold(ui, Stage.Pair, hearts = true) {
+    OnboardingScaffold(ui, Stage.Pair, hearts = true, topStart = { SignOutButton(ui) }) {
         Box(Modifier.graphicsLayer {
             scaleX = pulse
             scaleY = pulse
@@ -230,19 +229,24 @@ private fun WaitingForPartner(ui: UiController, invite: InviteDto) {
         ErrorMessage(ui.error)
         Spacer(Modifier.height(14.dp))
         TextButton(onClick = { ui.run({ ui.backend.refresh() }) }) { Text("They joined? Check now") }
-        TextButton(onClick = { ui.run({ ui.backend.cancelInvite() }) }) { Text("Cancel invite") }
-        SignedInAs(ui)
+        Spacer(Modifier.height(18.dp))
+        OutlinedButton(
+            onClick = { ui.run({ ui.backend.cancelInvite() }) },
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+        ) {
+            Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text("  Cancel invite")
+        }
     }
 }
 
+/** Sits in the top-left corner, opposite the debug "Skip". */
 @Composable
-private fun SignedInAs(ui: UiController) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 8.dp)) {
-        Text(
-            "Signed in as ${ui.backend.email.orEmpty()}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        TextButton(onClick = { ui.run({ ui.backend.signOut() }) }) { Text("Sign out") }
+private fun SignOutButton(ui: UiController) {
+    TextButton(onClick = { ui.run({ ui.backend.signOut() }) }) {
+        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+        Text("  Sign out")
     }
 }
