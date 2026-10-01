@@ -51,7 +51,9 @@ MAMI_KEYSTORE_FILE, MAMI_KEYSTORE_PASSWORD, MAMI_KEY_ALIAS, MAMI_KEY_PASSWORD
 | `data` | REST client, WebSocket, Room database, Keystore-sealed settings, `CryptoStore` (keys and sessions saved after every change) |
 | `sync` | `Messenger` (the orchestrator: pairing, sessions, send/receive, receipts, status), push service, background workers, notifications |
 | `device` | Reads battery, charging, network, signal, ringer and Do Not Disturb; watches for changes |
-| `ui` | Compose screens: sign-in, profile, sharing, pairing, chat, partner sheet, settings, safety code |
+| `ui` | Compose screens: sign-in, profile, sharing, pairing, chat (composer, bubbles, actions, search, viewer), shared media, starred, calls, partner sheet, settings, safety code |
+| `media` | Preparing attachments (photo re-encoding, video and file copies, thumbnails), voice recording and playback, link previews |
+| `calls` | `CallManager` (WebRTC calls), call audio routing and ringing, the call foreground service |
 | `demo` | `DemoBackend`: a simulated partner behind the same `MamiBackend` interface as `Messenger`, used by debug builds and the screenshot tests |
 | `ui/debug` | The 🐞 playground (debug builds only): jump to any screen, drive the demo partner, change the theme |
 

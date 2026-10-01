@@ -5,10 +5,10 @@ enough context about each other's phone that nobody has to guess why the other
 one went quiet.
 
 <p align="center">
-  <img src="docs/screenshots/01-welcome.png" width="200" alt="Welcome">
   <img src="docs/screenshots/08-chat.png" width="200" alt="Chat">
-  <img src="docs/screenshots/11-partner.png" width="200" alt="Partner sheet">
-  <img src="docs/screenshots/16-chat-sunset-dark.png" width="200" alt="Chat, Sunset theme, dark">
+  <img src="docs/screenshots/18-chat-media.png" width="200" alt="Photos, voice messages and files in the chat">
+  <img src="docs/screenshots/25-call-ringing.png" width="200" alt="Calling: ringing on their phone">
+  <img src="docs/screenshots/20-shared-media.png" width="200" alt="Media, links and files">
 </p>
 
 More in [`docs/screenshots/`](docs/screenshots). CI renders them from the
@@ -38,6 +38,23 @@ real Compose screens on every push.
 - **Dying-battery alert**: the phone tells the partner automatically at 5%.
 - **Typing indicator, presence, "thinking of you" nudges** (hug, kiss, miss
   you) with their own notification channel.
+- **Photos, videos, voice messages and files.** From the gallery or camera,
+  with captions and **view once** (screenshots blocked). Hold the mic to
+  record, slide to cancel; voice messages show a waveform and play at 1×,
+  1.5× or 2×. Everything is encrypted on the phone before it's uploaded and
+  deleted from the server once the partner has it.
+- **Link previews**, made on the sender's phone, so the server never learns
+  which links you share.
+- **Reply** (swipe right), **reactions**, **edit**, **unsend for both**,
+  **pin for both**, **star**, copy, save and share.
+- **Search** through the whole conversation (on the phone only), and
+  **Media, links and files**: Photos, Videos, Voice, Links and Files tabs by
+  month, with a full-screen viewer.
+- **Voice and video calls** over the internet, end-to-end encrypted. They ring
+  full screen even when the app is closed, show when it's actually ringing on
+  your partner's phone and their battery, and support mute,
+  speaker/Bluetooth, camera flip, a floating window (picture-in-picture) and
+  call history in the chat.
 - **Privacy**: keys sealed by the Android Keystore, no cloud backups, optional
   hidden notification text, content-free push notifications.
 
@@ -60,6 +77,10 @@ works with no server and no second phone.
     signal, silent/Do Not Disturb, time zone, status;
   - set off events: a message, a nudge, a dying-battery alert, Maya's phone
     dying, night time, a key change, losing the connection;
+  - have Maya send a photo, a view-once photo, a voice message, a video, a
+    PDF or a link, react to your message, edit, unsend or pin hers;
+  - have Maya call you (voice or video), hang up, drop her connection or
+    turn her camera off;
   - change the colour theme and dark mode;
   - start over.
 

@@ -4,30 +4,46 @@
 
 Sign-in, pairing, end-to-end encrypted chat with four message states, typing,
 presence, two-way status sharing, partner hints, dying-battery alert, nudges,
-quick statuses, safety codes, unlink/sign-out/delete. See the README.
+quick statuses, safety codes, unlink/sign-out/delete; photos, videos, voice
+messages, files and link previews; reply, reactions, edit, unsend, pins and
+stars; search and shared media; voice and video calls. See the README.
 
 Before handing the APK to testers:
 
-1. Deploy the server with SMTP and FCM configured (`server/README.md`).
+1. Deploy the server with SMTP and FCM configured, and coturn for calls
+   (`server/README.md`).
 2. Set `MAMI_SERVER_URL` and `GOOGLE_SERVICES_JSON` in the GitHub repository
    (`README.md`) and download the APK from the CI run.
 3. Test on at least one Samsung, one Xiaomi/Redmi and one Pixel phone.
-   Aggressive battery savers on some brands delay background work; tell
-   testers to set MaMi's battery usage to "Unrestricted".
+   Aggressive battery savers on some brands delay background work and
+   incoming calls; tell testers to set MaMi's battery usage to
+   "Unrestricted".
+4. Calls: try Wi-Fi to mobile data, two different carriers, Bluetooth
+   headphones, a locked phone, and calls while the app is closed.
 
 ## Next (Android)
 
-- App lock with fingerprint/face (BiometricPrompt)
-- Photos and voice notes (encrypted attachments)
-- Reply, edit, unsend, reactions
+Couple features (to be picked):
+
 - Home-screen widget: partner status, battery, local time, countdown
-- "Home safe": one-tap arrival message, then optional geofence
+- Scheduled messages in the partner's time zone ("good morning at 7 am theirs")
+- Anniversaries, days together, countdown to the next meeting, "on this day"
+- Daily question, mood check-in, love letters
+- "Home safe" check-in and time-limited live location
+- Automatic statuses: driving (activity recognition), "woke up at 7:12"
+- Pause sharing for a while, visible to the partner
+
+Basics still to do:
+
+- App lock with fingerprint/face (BiometricPrompt)
 - Encrypted backup protected by a passphrase, so a lost phone doesn't mean
   lost history
-- Voice and video calls (WebRTC, phone-style ringing via ConnectionService)
-- Anniversaries, countdown to the next meeting, "on this day"
+- Switching a voice call to video, and Android's system call integration
+  (Telecom/ConnectionService) on phones where it behaves well
+- Sending HD originals and compressing long videos before upload
 - Wear OS: nudges as wrist vibrations
-- Play Store listing: privacy policy, Data safety form, internal testing track
+- Play Store listing: privacy policy, Data safety form, internal testing
+  track, and App Bundles so each phone downloads only its own WebRTC library
 
 ## Then: iOS
 
