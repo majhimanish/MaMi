@@ -17,6 +17,8 @@ const LOGIN_CODE_MAX_ATTEMPTS: i64 = 5;
 const LOGIN_CODE_MIN_INTERVAL_MS: i64 = 30 * 1000;
 const LOGIN_CODE_WINDOW_MS: i64 = 60 * 60 * 1000;
 const LOGIN_CODE_MAX_PER_WINDOW: i64 = 5;
+/// A call that isn't answered within a minute has rung out.
+pub const CALL_SIGNAL_TTL_MS: i64 = 60 * 1000;
 
 pub fn now_ms() -> i64 {
     SystemTime::now()
@@ -654,10 +656,13 @@ impl Store {
     ) -> Result<Vec<Envelope>> {
         let rows: Vec<QueueRow> = sqlx::query_as(
             "SELECT seq, client_id, kind, message_type, body, created_at FROM queue
-             WHERE recipient_id = ? AND seq > ? AND acked_at IS NULL ORDER BY seq LIMIT ?",
+             WHERE recipient_id = ? AND seq > ? AND acked_at IS NULL
+               AND (kind != 'call' OR created_at > ?)
+             ORDER BY seq LIMIT ?",
         )
         .bind(recipient)
         .bind(after_seq)
+        .bind(now_ms() - CALL_SIGNAL_TTL_MS)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -667,6 +672,7 @@ impl Store {
                 let kind = match kind.as_str() {
                     "status" => EnvelopeKind::Status,
                     "delivered" => EnvelopeKind::Delivered,
+                    "call" => EnvelopeKind::Call,
                     _ => EnvelopeKind::Message,
                 };
                 Envelope {
@@ -737,6 +743,110 @@ impl Store {
         }
         tx.commit().await?;
         Ok(receipts)
+    }
+
+    /// Stores one piece of call signalling for the partner.
+    pub async fn enqueue_call(
+        &self,
+        sender: &str,
+        recipient: &str,
+        id: &str,
+        message_type: i32,
+        body: &str,
+    ) -> Result<Envelope> {
+        let now = now_ms();
+        let seq: i64 = sqlx::query_scalar(
+            "INSERT INTO queue (recipient_id, sender_id, kind, client_id, message_type, body, created_at)
+             VALUES (?, ?, 'call', ?, ?, ?, ?)
+             ON CONFLICT (sender_id, recipient_id, kind, client_id)
+             DO UPDATE SET body = excluded.body RETURNING seq",
+        )
+        .bind(recipient)
+        .bind(sender)
+        .bind(id)
+        .bind(message_type)
+        .bind(body)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(envelope(
+            seq,
+            id,
+            EnvelopeKind::Call,
+            Some(message_type),
+            Some(body),
+            now,
+        ))
+    }
+
+    /// Call signalling nobody picked up in time is useless; drop it.
+    pub async fn purge_stale_calls(&self) -> Result<u64> {
+        let done = sqlx::query("DELETE FROM queue WHERE kind = 'call' AND created_at < ?")
+            .bind(now_ms() - CALL_SIGNAL_TTL_MS)
+            .execute(&self.pool)
+            .await?;
+        Ok(done.rows_affected())
+    }
+
+    // ---- attachments -------------------------------------------------------------
+
+    pub async fn add_blob(&self, id: &str, owner: &str, size: u64) -> Result<()> {
+        sqlx::query("INSERT INTO blobs (id, owner_id, size, created_at) VALUES (?, ?, ?, ?)")
+            .bind(id)
+            .bind(owner)
+            .bind(size as i64)
+            .bind(now_ms())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn blob_owner(&self, id: &str) -> Result<Option<String>> {
+        sqlx::query_scalar("SELECT owner_id FROM blobs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// Bytes this user has waiting on the server.
+    pub async fn blob_bytes(&self, owner: &str) -> Result<u64> {
+        let total: i64 =
+            sqlx::query_scalar("SELECT COALESCE(SUM(size), 0) FROM blobs WHERE owner_id = ?")
+                .bind(owner)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(total.max(0) as u64)
+    }
+
+    pub async fn delete_blob(&self, id: &str) -> Result<bool> {
+        let done = sqlx::query("DELETE FROM blobs WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(done.rows_affected() > 0)
+    }
+
+    /// Forgets every attachment either of these users uploaded and returns
+    /// their ids, so the files can be removed too.
+    pub async fn take_blobs_of(&self, users: &[&str]) -> Result<Vec<String>> {
+        let mut ids = Vec::new();
+        for user in users {
+            let taken: Vec<String> =
+                sqlx::query_scalar("DELETE FROM blobs WHERE owner_id = ? RETURNING id")
+                    .bind(user)
+                    .fetch_all(&self.pool)
+                    .await?;
+            ids.extend(taken);
+        }
+        Ok(ids)
+    }
+
+    /// Forgets attachments older than `max_age_ms` and returns their ids.
+    pub async fn take_expired_blobs(&self, max_age_ms: i64) -> Result<Vec<String>> {
+        sqlx::query_scalar("DELETE FROM blobs WHERE created_at < ? RETURNING id")
+            .bind(now_ms() - max_age_ms)
+            .fetch_all(&self.pool)
+            .await
     }
 
     /// Forgets delivered messages older than `max_age_ms`.

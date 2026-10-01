@@ -2,21 +2,25 @@
 
 use std::sync::Arc;
 
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Query, State};
+use axum::body::Body;
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use hmac::{Hmac, KeyInit, Mac};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use tokio_util::io::ReaderStream;
 use tower_http::trace::TraceLayer;
 
 use crate::error::{ApiError, ApiResult};
 use crate::protocol::{
-    Accepted, Envelope, EnvelopeKind, IdentityBundle, PairingEvent, PartnerPresence, SendKind,
-    SendRequest, ServerFrame, SignedOneTimeKey,
+    Accepted, BlobCreated, Envelope, EnvelopeKind, IceServer, IceServers, IdentityBundle,
+    PairingEvent, PartnerPresence, SendKind, SendRequest, ServerFrame, SignedOneTimeKey,
 };
 use crate::push::{PushOutcome, Urgency};
 use crate::store::{
@@ -48,6 +52,12 @@ pub fn router(state: AppStateRef) -> Router {
         .route("/v1/partner/claim-key", post(claim_partner_key))
         .route("/v1/envelopes", get(list_envelopes).post(send_envelope))
         .route("/v1/envelopes/ack", post(ack_envelopes))
+        .route(
+            "/v1/blobs",
+            post(upload_blob).layer(DefaultBodyLimit::disable()),
+        )
+        .route("/v1/blobs/{id}", get(download_blob).delete(delete_blob))
+        .route("/v1/calls/ice-servers", get(ice_servers))
         .route("/v1/ws", get(ws::upgrade))
         .layer(DefaultBodyLimit::max(256 * 1024))
         .layer(TraceLayer::new_for_http())
@@ -257,6 +267,8 @@ async fn delete_account(
     AuthUser(me): AuthUser,
 ) -> ApiResult<StatusCode> {
     unlink(&state, &me).await?;
+    let blobs = state.store.take_blobs_of(&[&me]).await?;
+    state.blobs.delete_all(&blobs).await;
     state.store.delete_user(&me).await?;
     state.hub.kick(&me);
     Ok(StatusCode::NO_CONTENT)
@@ -491,6 +503,9 @@ async fn unpair(State(state): State<AppStateRef>, AuthUser(me): AuthUser) -> Api
 
 async fn unlink(state: &AppStateRef, me: &str) -> ApiResult<()> {
     if let Some(partner) = state.store.unpair(me).await? {
+        // Attachments were only ever for the two of them.
+        let blobs = state.store.take_blobs_of(&[me, &partner]).await?;
+        state.blobs.delete_all(&blobs).await;
         notify(
             state,
             &partner,
@@ -584,6 +599,20 @@ pub(crate) async fn deliver(
                 .send(&partner, &ServerFrame::Envelope(envelope.clone()));
             envelope
         }
+        SendKind::Call => {
+            let envelope = state
+                .store
+                .enqueue_call(sender, &partner, &req.id, req.message_type, &req.body)
+                .await?;
+            if !state
+                .hub
+                .send(&partner, &ServerFrame::Envelope(envelope.clone()))
+                && req.push
+            {
+                wake(state, &partner, Urgency::Call).await;
+            }
+            envelope
+        }
         SendKind::Ephemeral => {
             let envelope = Envelope {
                 seq: None,
@@ -620,6 +649,139 @@ pub(crate) async fn presence_of(state: &AppStateRef, user_id: &str) -> ApiResult
         online: state.hub.is_online(user_id),
         last_seen_ms: state.store.last_seen(user_id).await?,
     })
+}
+
+// ---- attachments ---------------------------------------------------------------------
+
+/// Uploads one encrypted attachment for the partner. The body is the
+/// encrypted file, nothing else; the server can't open it.
+async fn upload_blob(
+    State(state): State<AppStateRef>,
+    AuthUser(me): AuthUser,
+    headers: HeaderMap,
+    body: Body,
+) -> ApiResult<Json<BlobCreated>> {
+    partner_of(&state, &me).await?;
+    let max = state.config.max_blob_bytes;
+    let room = state
+        .config
+        .blob_quota_bytes
+        .saturating_sub(state.store.blob_bytes(&me).await?);
+    let too_big = |len: u64| {
+        if len > max {
+            ApiError::TooLarge("too_large")
+        } else {
+            ApiError::TooLarge("quota_full")
+        }
+    };
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
+    if let Some(len) = declared
+        && len > max.min(room)
+    {
+        return Err(too_big(len));
+    }
+    let id = random_hex(16);
+    let size = match state.blobs.save(&id, body, max.min(room)).await {
+        Err(ApiError::TooLarge(_)) => return Err(too_big(max.min(room) + 1)),
+        other => other?,
+    };
+    if let Err(e) = state.store.add_blob(&id, &me, size).await {
+        state.blobs.delete(&id).await;
+        return Err(e.into());
+    }
+    Ok(Json(BlobCreated { id, size }))
+}
+
+/// Only the uploader and their partner may see an attachment. Anyone else is
+/// told it doesn't exist.
+async fn check_blob_access(state: &AppStateRef, me: &str, id: &str) -> ApiResult<()> {
+    let owner = state
+        .store
+        .blob_owner(id)
+        .await?
+        .ok_or(ApiError::NotFound("blob_not_found"))?;
+    if owner == me || load_user(state, me).await?.partner_id.as_deref() == Some(owner.as_str()) {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound("blob_not_found"))
+    }
+}
+
+async fn download_blob(
+    State(state): State<AppStateRef>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    check_blob_access(&state, &me, &id).await?;
+    let (file, size) = state.blobs.open(&id).await?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+            (header::CONTENT_LENGTH, size.to_string()),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        Body::from_stream(ReaderStream::new(file)),
+    )
+        .into_response())
+}
+
+/// The partner calls this once the attachment is safely on their phone.
+async fn delete_blob(
+    State(state): State<AppStateRef>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    check_blob_access(&state, &me, &id).await?;
+    if state.store.delete_blob(&id).await? {
+        state.blobs.delete(&id).await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---- calls ---------------------------------------------------------------------------
+
+/// STUN and TURN servers for a call. TURN credentials follow coturn's REST
+/// API: the username is `expiry:user`, the password an HMAC of it with the
+/// shared secret, so the relay can check them without asking us.
+async fn ice_servers(
+    State(state): State<AppStateRef>,
+    AuthUser(me): AuthUser,
+) -> ApiResult<Json<IceServers>> {
+    partner_of(&state, &me).await?;
+    let mut ice_servers = Vec::new();
+    if !state.config.stun_urls.is_empty() {
+        ice_servers.push(IceServer {
+            urls: state.config.stun_urls.clone(),
+            username: None,
+            credential: None,
+        });
+    }
+    let ttl_s = match &state.config.turn {
+        Some(turn) => {
+            let (username, credential) =
+                turn_credentials(&turn.secret, &me, now_ms() / 1000 + turn.ttl_s);
+            ice_servers.push(IceServer {
+                urls: turn.urls.clone(),
+                username: Some(username),
+                credential: Some(credential),
+            });
+            turn.ttl_s
+        }
+        None => 24 * 60 * 60,
+    };
+    Ok(Json(IceServers { ice_servers, ttl_s }))
+}
+
+pub fn turn_credentials(secret: &str, user_id: &str, expires_at_s: i64) -> (String, String) {
+    let username = format!("{expires_at_s}:{user_id}");
+    let mut mac = Hmac::<sha1::Sha1>::new_from_slice(secret.as_bytes())
+        .expect("HMAC takes keys of any length");
+    mac.update(username.as_bytes());
+    let credential = STANDARD.encode(mac.finalize().into_bytes());
+    (username, credential)
 }
 
 // ---- helpers -------------------------------------------------------------------------
@@ -770,6 +932,14 @@ mod tests {
         ] {
             assert!(normalize_email(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn turn_credentials_match_coturn() {
+        // Same algorithm as coturn's use-auth-secret: base64(HMAC-SHA1(secret, username)).
+        let (username, credential) = turn_credentials("north", "maya", 1_700_000_000);
+        assert_eq!(username, "1700000000:maya");
+        assert_eq!(credential, "fIdYkxbrcGwtmRIt9CPVboR2QRE=");
     }
 
     #[test]

@@ -20,8 +20,8 @@ const FCM_SCOPE: &str = "https://www.googleapis.com/auth/firebase.messaging";
 pub enum Pusher {
     Fcm(Arc<Fcm>),
     Disabled,
-    /// Tests: remembers which tokens were woken.
-    Memory(Arc<Mutex<Vec<String>>>),
+    /// Tests: remembers which tokens were woken, and how urgently.
+    Memory(Arc<Mutex<Vec<(String, Urgency)>>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,9 @@ pub enum Urgency {
     /// A new message or nudge: wake the phone even in Doze.
     High,
     Normal,
+    /// An incoming call: wake the phone now, and drop the push if it can't
+    /// be delivered within a minute, because by then the call is over.
+    Call,
 }
 
 pub enum PushOutcome {
@@ -46,7 +49,7 @@ impl Pusher {
             Self::Memory(sent) => {
                 sent.lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .push(token.to_owned());
+                    .push((token.to_owned(), urgency));
                 PushOutcome::Sent
             }
         }
@@ -147,15 +150,16 @@ impl Fcm {
                 return PushOutcome::Failed;
             }
         };
-        let priority = match urgency {
-            Urgency::High => "HIGH",
-            Urgency::Normal => "NORMAL",
+        let (priority, ttl, kind) = match urgency {
+            Urgency::High => ("HIGH", "86400s", "wake"),
+            Urgency::Normal => ("NORMAL", "86400s", "wake"),
+            Urgency::Call => ("HIGH", "60s", "call"),
         };
         let body = json!({
             "message": {
                 "token": device_token,
-                "data": { "t": "wake" },
-                "android": { "priority": priority, "ttl": "86400s" }
+                "data": { "t": kind },
+                "android": { "priority": priority, "ttl": ttl }
             }
         });
         let url = format!(

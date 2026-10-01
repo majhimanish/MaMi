@@ -7,13 +7,15 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use mami_core::{Ciphertext, CryptoAccount, CryptoSession, DeviceStatus, Payload, ShareKind};
 use mami_server::api::{AuthVerified, ClaimedKey, MeResponse, PartnerView};
+use mami_server::blobs::BlobStore;
 use mami_server::mail::{Mailer, SentMail};
+use mami_server::protocol::{BlobCreated, IceServers};
 use mami_server::protocol::{
     ClientFrame, Envelope, EnvelopeKind, PairingEvent, SendKind, SendRequest, ServerFrame,
 };
-use mami_server::push::Pusher;
+use mami_server::push::{Pusher, Urgency};
 use mami_server::store::{self, Store};
-use mami_server::{AppState, router};
+use mami_server::{AppState, Config, Turn, router};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
@@ -28,22 +30,31 @@ struct Server {
     store: Store,
     http: reqwest::Client,
     mails: Arc<Mutex<Vec<SentMail>>>,
-    pushes: Arc<Mutex<Vec<String>>>,
+    pushes: Arc<Mutex<Vec<(String, Urgency)>>>,
+    blobs: BlobStore,
 }
 
 impl Server {
     async fn start() -> Self {
-        let path = std::env::temp_dir().join(format!("mami-test-{}.db", rand_suffix()));
+        Self::start_with(Config::default()).await
+    }
+
+    async fn start_with(config: Config) -> Self {
+        let name = format!("mami-test-{}", rand_suffix());
+        let path = std::env::temp_dir().join(format!("{name}.db"));
         let pool = store::open(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
         let mails = Arc::new(Mutex::new(Vec::new()));
         let pushes = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new(pool);
+        let blobs = BlobStore::new(std::env::temp_dir().join(format!("{name}-blobs"))).unwrap();
         let state = AppState::new(
             store.clone(),
             Mailer::Memory(mails.clone()),
             Pusher::Memory(pushes.clone()),
+            blobs.clone(),
+            config,
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -55,6 +66,7 @@ impl Server {
             http,
             mails,
             pushes,
+            blobs,
         }
     }
 
@@ -245,6 +257,7 @@ fn text(id: &str, body: &str) -> Payload {
         body: body.into(),
         sent_at_ms: 1,
         reply_to: None,
+        link: None,
     }
 }
 
@@ -519,7 +532,7 @@ async fn two_phones_pair_and_talk() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
         *server.pushes.lock().unwrap(),
-        vec!["maya-phone".to_owned()]
+        vec![("maya-phone".to_owned(), Urgency::High)]
     );
 
     let pending = maya.pending().await;
@@ -735,4 +748,427 @@ async fn deleting_the_account_unlinks_the_partner() {
         .await
         .unwrap();
     assert_eq!(gone.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Arjun starts an encrypted session with Maya (the first message must reach
+/// her before she can answer).
+async fn start_session(maya: &mut Phone, arjun: &mut Phone) {
+    let claimed: ClaimedKey = arjun
+        .request(reqwest::Method::POST, "/v1/partner/claim-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let maya_identity = mami_core::IdentityBundle {
+        curve25519: claimed.identity.curve25519.clone(),
+        ed25519: claimed.identity.ed25519.clone(),
+        curve25519_signature: claimed.identity.curve25519_signature.clone(),
+    };
+    let otk = mami_core::SignedOneTimeKey {
+        key_id: claimed.one_time_key.key_id,
+        key: claimed.one_time_key.key,
+        signature: claimed.one_time_key.signature,
+    };
+    arjun.session = Some(arjun.account.start_session(maya_identity, otk).unwrap());
+    let hello = arjun.seal(
+        "hello",
+        SendKind::Message,
+        Payload::Hello {
+            display_name: "Arjun".into(),
+        },
+        false,
+    );
+    assert_eq!(arjun.post_envelope(&hello).await.status(), StatusCode::OK);
+    let envelope = maya
+        .pending()
+        .await
+        .into_iter()
+        .find(|e| e.id == "hello")
+        .unwrap();
+    let arjun_identity = arjun.account.identity();
+    let accepted = maya
+        .account
+        .accept_session(
+            arjun_identity,
+            Ciphertext {
+                message_type: envelope.message_type.unwrap(),
+                body: envelope.body.clone().unwrap(),
+            },
+        )
+        .unwrap();
+    maya.session = Some(accepted.session);
+    let r = maya
+        .request(reqwest::Method::POST, "/v1/envelopes/ack")
+        .json(&json!({ "seqs": [envelope.seq.unwrap()] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn attachments_are_only_for_the_couple() {
+    let server = Server::start_with(Config {
+        max_blob_bytes: 200 * 1024,
+        blob_quota_bytes: 300 * 1024,
+        ..Config::default()
+    })
+    .await;
+    let mut maya = server.sign_in("maya@example.com").await;
+    let mut arjun = server.sign_in("arjun@example.com").await;
+    let stranger = server.sign_in("stranger@example.com").await;
+
+    // Nothing to upload for before pairing.
+    let r = maya
+        .request(reqwest::Method::POST, "/v1/blobs")
+        .body(vec![1u8; 10])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+
+    pair(&maya, &arjun).await;
+    start_session(&mut maya, &mut arjun).await;
+
+    // Arjun encrypts a photo with the core and uploads only ciphertext.
+    let dir = std::env::temp_dir().join(format!("mami-photo-{}", rand_suffix()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let photo: Vec<u8> = (0..150_000u32).map(|i| (i % 253) as u8).collect();
+    std::fs::write(dir.join("photo.jpg"), &photo).unwrap();
+    let key = mami_core::encrypt_file(
+        dir.join("photo.jpg").display().to_string(),
+        dir.join("photo.enc").display().to_string(),
+    )
+    .unwrap();
+    let encrypted = std::fs::read(dir.join("photo.enc")).unwrap();
+    let r = arjun
+        .request(reqwest::Method::POST, "/v1/blobs")
+        .body(encrypted.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let blob: BlobCreated = r.json().await.unwrap();
+    assert_eq!(blob.size, encrypted.len() as u64);
+
+    // The key travels inside an end-to-end encrypted message.
+    let media = Payload::Media {
+        id: "photo-1".into(),
+        sent_at_ms: 5,
+        reply_to: None,
+        media: mami_core::MediaInfo {
+            kind: mami_core::MediaKind::Photo,
+            blob_id: blob.id.clone(),
+            key: key.key.clone(),
+            size: key.plain_size,
+            mime: "image/jpeg".into(),
+            name: None,
+            width: Some(4000),
+            height: Some(3000),
+            duration_ms: None,
+            thumbnail: Some("AAAA".into()),
+            waveform: vec![],
+        },
+        caption: Some("us 💗".into()),
+        view_once: false,
+    };
+    let sent = arjun.seal("photo-1", SendKind::Message, media.clone(), true);
+    assert_eq!(arjun.post_envelope(&sent).await.status(), StatusCode::OK);
+    let envelope = maya
+        .pending()
+        .await
+        .into_iter()
+        .find(|e| e.id == "photo-1")
+        .unwrap();
+    let Payload::Media { media: info, .. } = maya.open(&envelope) else {
+        panic!()
+    };
+
+    // A stranger can't fetch it (and can't tell it exists).
+    let path = format!("/v1/blobs/{}", info.blob_id);
+    for who in [&stranger] {
+        let r = who
+            .request(reqwest::Method::GET, &path)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        let r = who
+            .request(reqwest::Method::DELETE, &path)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
+    let r = maya
+        .request(reqwest::Method::GET, "/v1/blobs/../../etc/passwd")
+        .send()
+        .await
+        .unwrap();
+    assert!(!r.status().is_success());
+
+    // Maya downloads, decrypts, and then deletes it from the server.
+    let r = maya
+        .request(reqwest::Method::GET, &path)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    std::fs::write(dir.join("download.enc"), r.bytes().await.unwrap()).unwrap();
+    mami_core::decrypt_file(
+        dir.join("download.enc").display().to_string(),
+        dir.join("download.jpg").display().to_string(),
+        info.key,
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(dir.join("download.jpg")).unwrap(), photo);
+    let r = maya
+        .request(reqwest::Method::DELETE, &path)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    let r = maya
+        .request(reqwest::Method::GET, &path)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        std::fs::read_dir(server.blobs.dir())
+            .unwrap()
+            .flat_map(|d| std::fs::read_dir(d.unwrap().path()).unwrap())
+            .count(),
+        0
+    );
+
+    // Too big for one file, then too much in total.
+    let r = arjun
+        .request(reqwest::Method::POST, "/v1/blobs")
+        .body(vec![0u8; 250 * 1024])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let mut kept = Vec::new();
+    for _ in 0..2 {
+        let r = arjun
+            .request(reqwest::Method::POST, "/v1/blobs")
+            .body(vec![0u8; 140 * 1024])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        kept.push(r.json::<BlobCreated>().await.unwrap().id);
+    }
+    let r = arjun
+        .request(reqwest::Method::POST, "/v1/blobs")
+        .body(vec![0u8; 140 * 1024])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let error: Value = r.json().await.unwrap();
+    assert_eq!(error["error"], "quota_full");
+
+    // Unlinking deletes every attachment between them.
+    let r = maya
+        .request(reqwest::Method::DELETE, "/v1/partner")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    for id in kept {
+        let r = arjun
+            .request(reqwest::Method::GET, &format!("/v1/blobs/{id}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn calls_ring_right_away_and_ring_out() {
+    let server = Server::start_with(Config {
+        stun_urls: vec!["stun:stun.example.com:3478".into()],
+        turn: Some(Turn {
+            urls: vec!["turn:turn.example.com:3478?transport=udp".into()],
+            secret: "north".into(),
+            ttl_s: 3600,
+        }),
+        ..Config::default()
+    })
+    .await;
+    let mut maya = server.sign_in("maya@example.com").await;
+    let mut arjun = server.sign_in("arjun@example.com").await;
+    pair(&maya, &arjun).await;
+    start_session(&mut maya, &mut arjun).await;
+
+    // Call servers come with short-lived TURN credentials.
+    let ice: IceServers = arjun
+        .request(reqwest::Method::GET, "/v1/calls/ice-servers")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ice.ice_servers.len(), 2);
+    assert_eq!(ice.ice_servers[0].urls, vec!["stun:stun.example.com:3478"]);
+    let turn = &ice.ice_servers[1];
+    let username = turn.username.clone().unwrap();
+    let (expires, user) = username.split_once(':').unwrap();
+    assert!(expires.parse::<i64>().unwrap() > store::now_ms() / 1000 + 3000);
+    assert_eq!(user, arjun.me().await.user_id);
+    assert_eq!(
+        turn.credential.clone().unwrap(),
+        mami_server::api::turn_credentials("north", user, expires.parse().unwrap()).1
+    );
+
+    // Maya's app is closed: the offer wakes her phone with a call push.
+    maya.request(reqwest::Method::PUT, "/v1/push-token")
+        .json(&json!({ "token": "maya-phone" }))
+        .send()
+        .await
+        .unwrap();
+    let offer = arjun.seal(
+        "call-1-offer",
+        SendKind::Call,
+        Payload::CallOffer {
+            call_id: "call-1".into(),
+            video: true,
+            sdp: "v=0 ...".into(),
+            sent_at_ms: 1,
+        },
+        true,
+    );
+    assert_eq!(arjun.post_envelope(&offer).await.status(), StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        *server.pushes.lock().unwrap(),
+        vec![("maya-phone".to_owned(), Urgency::Call)]
+    );
+
+    // She opens the app, gets the offer and answers over the live socket.
+    let mut maya_ws = maya.connect().await;
+    let _ready = next_frame(&mut maya_ws).await;
+    let pending = maya.pending().await;
+    let call = pending
+        .iter()
+        .find(|e| e.kind == EnvelopeKind::Call)
+        .unwrap();
+    assert!(matches!(
+        maya.open(call),
+        Payload::CallOffer { video: true, .. }
+    ));
+    send_frame(
+        &mut maya_ws,
+        &ClientFrame::Ack {
+            seqs: vec![call.seq.unwrap()],
+        },
+    )
+    .await;
+    let mut arjun_ws = arjun.connect().await;
+    let _ready = next_frame(&mut arjun_ws).await;
+    let answer = maya.seal(
+        "call-1-answer",
+        SendKind::Call,
+        Payload::CallAnswer {
+            call_id: "call-1".into(),
+            sdp: "v=0 answer".into(),
+        },
+        false,
+    );
+    send_frame(&mut maya_ws, &ClientFrame::Send(answer)).await;
+    loop {
+        // The receipt for the earlier hello may arrive first.
+        if let ServerFrame::Envelope(e) = next_frame(&mut arjun_ws).await
+            && e.kind == EnvelopeKind::Call
+        {
+            assert!(matches!(arjun.open(&e), Payload::CallAnswer { .. }));
+            break;
+        }
+    }
+    assert!(
+        maya.pending()
+            .await
+            .iter()
+            .all(|e| e.kind != EnvelopeKind::Call)
+    );
+
+    // An offer nobody picks up within a minute rings out: it's never delivered late.
+    let stale = arjun.seal(
+        "call-2-offer",
+        SendKind::Call,
+        Payload::CallOffer {
+            call_id: "call-2".into(),
+            video: false,
+            sdp: "v=0".into(),
+            sent_at_ms: 2,
+        },
+        false,
+    );
+    drop(maya_ws);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(arjun.post_envelope(&stale).await.status(), StatusCode::OK);
+    sqlx::query("UPDATE queue SET created_at = created_at - 120000 WHERE kind = 'call'")
+        .execute(&server.store.pool)
+        .await
+        .unwrap();
+    assert!(
+        maya.pending()
+            .await
+            .iter()
+            .all(|e| e.kind != EnvelopeKind::Call)
+    );
+    // The stale offer and the answer Arjun never acknowledged.
+    assert_eq!(server.store.purge_stale_calls().await.unwrap(), 2);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE kind = 'call'")
+        .fetch_one(&server.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn upgrading_the_queue_keeps_counting_sequence_numbers() {
+    // A database created by the first release, with a message already
+    // delivered and forgotten.
+    let path = std::env::temp_dir().join(format!("mami-upgrade-{}.db", rand_suffix()));
+    let url = format!("sqlite://{}?mode=rwc", path.display());
+    let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO users (id, email, created_at) VALUES ('a', 'a@x.y', 0), ('b', 'b@x.y', 0);
+         INSERT INTO queue (recipient_id, sender_id, kind, client_id, created_at)
+             VALUES ('a', 'b', 'message', 'm1', 0), ('a', 'b', 'message', 'm2', 0);
+         DELETE FROM queue WHERE client_id = 'm2';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0002_blobs_and_calls.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let seq: i64 = sqlx::query_scalar(
+        "INSERT INTO queue (recipient_id, sender_id, kind, client_id, created_at)
+         VALUES ('a', 'b', 'call', 'c1', 0) RETURNING seq",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(seq, 3, "sequence numbers must never be reused");
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE client_id = 'm1'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1);
 }

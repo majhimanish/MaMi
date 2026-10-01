@@ -29,6 +29,9 @@ pub enum SendKind {
     Status,
     /// Typing indicators. Forwarded only if the partner is online right now.
     Ephemeral,
+    /// Call signalling. Kept for a minute at most (a call nobody picks up in
+    /// time is over), and with `push` it rings the partner's phone right away.
+    Call,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,6 +54,7 @@ pub enum EnvelopeKind {
     Ephemeral,
     /// Your message `id` reached your partner's phone at `at_ms`.
     Delivered,
+    Call,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -74,6 +78,29 @@ pub struct Envelope {
 pub struct Accepted {
     pub id: String,
     pub at_ms: i64,
+}
+
+/// One STUN or TURN server for WebRTC, in the browser's `RTCIceServer` shape.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IceServer {
+    pub urls: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IceServers {
+    pub ice_servers: Vec<IceServer>,
+    /// How long the TURN credentials stay valid.
+    pub ttl_s: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlobCreated {
+    pub id: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 
+use mami_server::blobs::BlobStore;
 use mami_server::mail::Mailer;
 use mami_server::push::{Fcm, Pusher};
 use mami_server::store::{self, Store};
-use mami_server::{AppState, router};
+use mami_server::{AppState, Config, Turn, router};
 use tracing_subscriber::EnvFilter;
 
 /// Configuration comes from environment variables; see `server/README.md`.
@@ -39,9 +40,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let mut config = Config::default();
+    if let Some(mb) = env("MAMI_MAX_UPLOAD_MB") {
+        config.max_blob_bytes = mb.parse::<u64>()? * 1024 * 1024;
+    }
+    if let Some(mb) = env("MAMI_UPLOAD_QUOTA_MB") {
+        config.blob_quota_bytes = mb.parse::<u64>()? * 1024 * 1024;
+    }
+    if let Some(urls) = env("MAMI_STUN_URLS") {
+        config.stun_urls = list(&urls);
+    }
+    match (env("MAMI_TURN_URLS"), env("MAMI_TURN_SECRET")) {
+        (Some(urls), Some(secret)) => {
+            config.turn = Some(Turn {
+                urls: list(&urls),
+                secret,
+                ttl_s: 24 * 60 * 60,
+            });
+        }
+        _ => tracing::warn!(
+            "MAMI_TURN_URLS / MAMI_TURN_SECRET not set: calls only connect when the phones can reach each other directly"
+        ),
+    }
+    let blobs = BlobStore::new(env("MAMI_BLOB_DIR").unwrap_or_else(|| "blobs".into()))?;
+
     let store = Store::new(store::open(&database_url).await?);
-    tokio::spawn(purge_delivered_messages(store.clone()));
-    let app = router(AppState::new(store, mailer, pusher));
+    tokio::spawn(housekeeping(store.clone(), blobs.clone()));
+    let app = router(AppState::new(store, mailer, pusher, blobs, config));
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "MaMi server listening");
@@ -51,16 +76,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Delivered messages are remembered (without their contents) for a week so a
-/// resend is not delivered twice.
-async fn purge_delivered_messages(store: Store) {
+/// Hourly clean-up:
+/// * delivered messages are remembered (without their contents) for a week
+///   so a resend is not delivered twice;
+/// * attachments nobody downloaded within 30 days are deleted;
+/// * call signalling for calls that have long rung out is dropped.
+async fn housekeeping(store: Store, blobs: BlobStore) {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
     let mut every_hour = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
     loop {
         every_hour.tick().await;
-        if let Err(e) = store.purge_delivered(7 * 24 * 60 * 60 * 1000).await {
+        if let Err(e) = store.purge_delivered(7 * DAY_MS).await {
             tracing::warn!(error = %e, "could not purge delivered messages");
         }
+        match store.take_expired_blobs(30 * DAY_MS).await {
+            Ok(ids) => blobs.delete_all(&ids).await,
+            Err(e) => tracing::warn!(error = %e, "could not purge old attachments"),
+        }
+        if let Err(e) = store.purge_stale_calls().await {
+            tracing::warn!(error = %e, "could not purge old call signalling");
+        }
     }
+}
+
+fn list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn env(name: &str) -> Option<String> {

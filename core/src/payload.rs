@@ -26,6 +26,82 @@ pub enum Payload {
         body: String,
         sent_at_ms: i64,
         reply_to: Option<String>,
+        /// A preview of the first link, made on the sender's phone so the
+        /// server never learns which links the two of you share.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link: Option<LinkPreview>,
+    },
+    /// A photo, video, voice note or file. The file itself waits on the
+    /// server as an encrypted blob; the key to open it is in here.
+    Media {
+        id: String,
+        sent_at_ms: i64,
+        reply_to: Option<String>,
+        media: MediaInfo,
+        caption: Option<String>,
+        /// The receiver can open it once, then it's gone from their phone.
+        #[serde(default)]
+        view_once: bool,
+    },
+    /// Sets (or, with no emoji, removes) my reaction to a message.
+    Reaction {
+        target_id: String,
+        emoji: Option<String>,
+        sent_at_ms: i64,
+    },
+    /// New text for one of my earlier messages (or a photo's caption).
+    Edit {
+        target_id: String,
+        body: String,
+        edited_at_ms: i64,
+    },
+    /// Removes one of my messages from both phones.
+    Unsend {
+        target_id: String,
+        at_ms: i64,
+    },
+    /// Pins a message to the top of the chat, for both of us.
+    Pin {
+        target_id: String,
+        pinned: bool,
+        at_ms: i64,
+    },
+    /// A view-once photo or video was opened.
+    Opened {
+        target_id: String,
+        at_ms: i64,
+    },
+    /// Starts a voice or video call. `sdp` is the WebRTC offer; its DTLS
+    /// fingerprint travels end-to-end encrypted, so nobody can sit in the
+    /// middle of the call.
+    CallOffer {
+        call_id: String,
+        video: bool,
+        sdp: String,
+        sent_at_ms: i64,
+    },
+    /// The callee's phone is ringing.
+    CallRinging {
+        call_id: String,
+    },
+    CallAnswer {
+        call_id: String,
+        sdp: String,
+    },
+    /// Network paths the other phone can try.
+    CallCandidates {
+        call_id: String,
+        candidates: Vec<IceCandidate>,
+    },
+    /// Camera or microphone switched on or off during a call.
+    CallMedia {
+        call_id: String,
+        camera_on: bool,
+        muted: bool,
+    },
+    CallEnd {
+        call_id: String,
+        reason: CallEndReason,
     },
     /// These messages were shown on the partner's screen.
     Read {
@@ -52,6 +128,81 @@ pub enum Payload {
         sent_at_ms: i64,
     },
     /// A payload kind this app version does not know yet.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Everything needed to download, open and show an attachment.
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MediaInfo {
+    pub kind: MediaKind,
+    /// Where the encrypted file waits on the server.
+    pub blob_id: String,
+    /// The file key from [`crate::encrypt_file`], base64.
+    pub key: String,
+    /// Size of the original file in bytes.
+    pub size: u64,
+    pub mime: String,
+    /// The original file name, for documents.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub width: Option<i32>,
+    #[serde(default)]
+    pub height: Option<i32>,
+    /// Length of a video or voice note.
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
+    /// A tiny blurred JPEG (base64) shown while the real file downloads.
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+    /// Loudness of a voice note over time, 0 to 255.
+    #[serde(default)]
+    pub waveform: Vec<u8>,
+}
+
+#[derive(uniffi::Enum, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaKind {
+    Photo,
+    Video,
+    Voice,
+    File,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct LinkPreview {
+    pub url: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// A small JPEG (base64) of the page's preview image.
+    #[serde(default)]
+    pub image: Option<String>,
+}
+
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct IceCandidate {
+    pub sdp_mid: Option<String>,
+    pub sdp_m_line_index: i32,
+    pub candidate: String,
+}
+
+#[derive(uniffi::Enum, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CallEndReason {
+    /// Someone hung up (or cancelled before it was answered).
+    Hangup,
+    Declined,
+    /// Already on another call.
+    Busy,
+    /// Nobody answered.
+    NoAnswer,
+    /// The connection could not be set up or was lost.
+    Failed,
     #[serde(other)]
     Unknown,
 }
@@ -168,6 +319,39 @@ pub fn visible_status(partner: DeviceStatus, my_shares: Vec<ShareKind>) -> Devic
     visible
 }
 
+/// The web links in a message, in order, for previews and the "Links" tab.
+/// Finds `http://`, `https://` and `www.` addresses; trailing punctuation
+/// like the full stop at the end of a sentence is not part of the link.
+#[uniffi::export]
+pub fn extract_links(text: String) -> Vec<String> {
+    text.split(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"'))
+        .filter_map(|word| {
+            let word = word.trim_start_matches(['(', '[', '{', '\'', '*', '_']);
+            let lower = word.to_ascii_lowercase();
+            if !(lower.starts_with("http://")
+                || lower.starts_with("https://")
+                || lower.starts_with("www."))
+            {
+                return None;
+            }
+            let trailing = ['.', ',', '!', '?', ':', ';', '\'', '*', '_'];
+            let mut link = word.trim_end_matches(trailing);
+            // Keep a closing bracket only if the link opened one, as in Wikipedia URLs.
+            while link.ends_with(')') && link.matches(')').count() > link.matches('(').count() {
+                link = link[..link.len() - 1].trim_end_matches(trailing);
+            }
+            let host = link
+                .split_once("://")
+                .map_or(link, |(_, rest)| rest)
+                .split(['/', '?', '#'])
+                .next()
+                .unwrap_or("");
+            (host.contains('.') && !host.starts_with('.') && !host.ends_with('.'))
+                .then(|| link.to_owned())
+        })
+        .collect()
+}
+
 /// JSON form of a payload, for debugging and for local storage.
 #[uniffi::export]
 pub fn payload_to_json(payload: Payload) -> Result<String, CoreError> {
@@ -207,12 +391,14 @@ mod tests {
             body: "hi".into(),
             sent_at_ms: 5,
             reply_to: None,
+            link: None,
         };
         let longer = Payload::Text {
             id: "1".into(),
             body: "hello!".into(),
             sent_at_ms: 5,
             reply_to: None,
+            link: None,
         };
         let a = seal(&short).unwrap();
         let b = seal(&longer).unwrap();
@@ -263,6 +449,101 @@ mod tests {
         assert_eq!(status.network, Some(NetworkKind::Other));
         assert_eq!(status.shares, vec![ShareKind::Battery, ShareKind::Unknown]);
         assert_eq!(status.battery_percent, None);
+    }
+
+    #[test]
+    fn new_payloads_round_trip() {
+        let media = Payload::Media {
+            id: "m1".into(),
+            sent_at_ms: 10,
+            reply_to: Some("t1".into()),
+            media: MediaInfo {
+                kind: MediaKind::Voice,
+                blob_id: "b1".into(),
+                key: "a2V5".into(),
+                size: 12_345,
+                mime: "audio/mp4".into(),
+                name: None,
+                width: None,
+                height: None,
+                duration_ms: Some(4_200),
+                thumbnail: None,
+                waveform: vec![0, 128, 255],
+            },
+            caption: None,
+            view_once: false,
+        };
+        let call = Payload::CallCandidates {
+            call_id: "c1".into(),
+            candidates: vec![IceCandidate {
+                sdp_mid: Some("0".into()),
+                sdp_m_line_index: 0,
+                candidate: "candidate:1 1 udp 2122260223 192.0.2.1 54400 typ host".into(),
+            }],
+        };
+        let text = Payload::Text {
+            id: "t2".into(),
+            body: "look https://example.com".into(),
+            sent_at_ms: 11,
+            reply_to: None,
+            link: Some(LinkPreview {
+                url: "https://example.com".into(),
+                title: Some("Example".into()),
+                description: None,
+                image: None,
+            }),
+        };
+        for payload in [media, call, text] {
+            let sealed = seal(&payload).unwrap();
+            assert_eq!(open(&sealed).unwrap(), payload);
+        }
+
+        // Older phones leave out the optional fields.
+        let minimal = payload_from_json(
+            r#"{"t":"media","id":"m","sent_at_ms":1,"reply_to":null,"caption":null,
+                "media":{"kind":"sticker","blob_id":"b","key":"k","size":1,"mime":"x"}}"#
+                .into(),
+        )
+        .unwrap();
+        let Payload::Media {
+            media, view_once, ..
+        } = minimal
+        else {
+            panic!()
+        };
+        assert_eq!(media.kind, MediaKind::Unknown);
+        assert!(media.waveform.is_empty());
+        assert!(!view_once);
+        let end = payload_from_json(r#"{"t":"call_end","call_id":"c","reason":"exploded"}"#.into())
+            .unwrap();
+        assert_eq!(
+            end,
+            Payload::CallEnd {
+                call_id: "c".into(),
+                reason: CallEndReason::Unknown
+            }
+        );
+    }
+
+    #[test]
+    fn links_are_found_without_trailing_punctuation() {
+        assert_eq!(
+            extract_links(
+                "Look: https://example.com/a?b=1. And www.mami.app, \
+                 (https://en.wikipedia.org/wiki/Momo_(food)) and not.a.link or http://x"
+                    .into()
+            ),
+            vec![
+                "https://example.com/a?b=1",
+                "www.mami.app",
+                "https://en.wikipedia.org/wiki/Momo_(food)",
+            ]
+        );
+        assert!(extract_links("no links here".into()).is_empty());
+        assert_eq!(
+            extract_links("HTTPS://EXAMPLE.COM!".into()),
+            vec!["HTTPS://EXAMPLE.COM"]
+        );
     }
 
     #[test]

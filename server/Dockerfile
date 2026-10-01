@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && mkdir /data && chown 65534:65534 /data
 COPY --from=build /src/target/release/mami-server /usr/local/bin/mami-server
 ENV MAMI_BIND=0.0.0.0:8080 \
-    MAMI_DATABASE_URL=sqlite:///data/mami.db
+    MAMI_DATABASE_URL=sqlite:///data/mami.db \
+    MAMI_BLOB_DIR=/data/blobs
 VOLUME /data
 EXPOSE 8080
 USER 65534

@@ -364,6 +364,7 @@ mod tests {
             body: body.into(),
             sent_at_ms: 1,
             reply_to: None,
+            link: None,
         }
     }
 

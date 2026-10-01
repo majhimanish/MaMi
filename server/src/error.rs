@@ -17,8 +17,12 @@ pub enum ApiError {
     Conflict(&'static str),
     #[error("too many attempts, try again later")]
     TooManyRequests,
+    #[error("{0}")]
+    TooLarge(&'static str),
     #[error("internal error")]
     Internal(#[from] sqlx::Error),
+    #[error("storage error")]
+    Storage(#[from] std::io::Error),
 }
 
 impl ApiError {
@@ -30,25 +34,32 @@ impl ApiError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
-            Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::Internal(_) | Self::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
     /// Stable machine-readable code for the apps.
     pub fn code(&self) -> &'static str {
         match self {
-            Self::BadRequest(c) | Self::Forbidden(c) | Self::NotFound(c) | Self::Conflict(c) => c,
+            Self::BadRequest(c)
+            | Self::Forbidden(c)
+            | Self::NotFound(c)
+            | Self::Conflict(c)
+            | Self::TooLarge(c) => c,
             Self::Unauthorized => "unauthorized",
             Self::TooManyRequests => "too_many_requests",
-            Self::Internal(_) => "internal",
+            Self::Internal(_) | Self::Storage(_) => "internal",
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        if let Self::Internal(e) = &self {
-            tracing::error!(error = %e, "database error");
+        match &self {
+            Self::Internal(e) => tracing::error!(error = %e, "database error"),
+            Self::Storage(e) => tracing::error!(error = %e, "blob storage error"),
+            _ => {}
         }
         (self.status(), Json(json!({ "error": self.code() }))).into_response()
     }
