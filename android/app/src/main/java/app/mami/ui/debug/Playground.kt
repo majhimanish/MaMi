@@ -226,7 +226,7 @@ fun Playground(controller: AppController, onDismiss: () -> Unit) {
                     Palette.entries.forEach { palette ->
                         FilterChip(
                             selected = controller.appearance.palette == palette,
-                            onClick = { controller.setAppearance(controller.appearance.copy(palette = palette)) },
+                            onClick = { controller.changeAppearance(controller.appearance.copy(palette = palette)) },
                             label = { Text("${palette.emoji} ${palette.label}") },
                         )
                     }
@@ -236,7 +236,7 @@ fun Playground(controller: AppController, onDismiss: () -> Unit) {
                     DarkMode.entries.forEachIndexed { index, mode ->
                         SegmentedButton(
                             selected = controller.appearance.darkMode == mode,
-                            onClick = { controller.setAppearance(controller.appearance.copy(darkMode = mode)) },
+                            onClick = { controller.changeAppearance(controller.appearance.copy(darkMode = mode)) },
                             shape = SegmentedButtonDefaults.itemShape(index, DarkMode.entries.size),
                         ) { Text(mode.label) }
                     }

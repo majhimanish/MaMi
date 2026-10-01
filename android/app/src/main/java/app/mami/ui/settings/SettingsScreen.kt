@@ -200,7 +200,7 @@ fun SettingsScreen(ui: UiController) {
                         .filter { it != Palette.WALLPAPER || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S }
                         .forEach { palette ->
                             PaletteSwatch(palette, selected = appearance.palette == palette) {
-                                ui.setAppearance(appearance.copy(palette = palette))
+                                ui.changeAppearance(appearance.copy(palette = palette))
                             }
                         }
                 }
@@ -209,14 +209,14 @@ fun SettingsScreen(ui: UiController) {
                     DarkMode.entries.forEachIndexed { index, mode ->
                         SegmentedButton(
                             selected = appearance.darkMode == mode,
-                            onClick = { ui.setAppearance(appearance.copy(darkMode = mode)) },
+                            onClick = { ui.changeAppearance(appearance.copy(darkMode = mode)) },
                             shape = SegmentedButtonDefaults.itemShape(index, DarkMode.entries.size),
                         ) { Text(mode.label) }
                     }
                 }
                 Spacer(Modifier.height(4.dp))
                 ToggleRow(Icons.Filled.Wallpaper, "Heart wallpaper", "Little hearts behind your chat", appearance.chatWallpaper) {
-                    ui.setAppearance(appearance.copy(chatWallpaper = it))
+                    ui.changeAppearance(appearance.copy(chatWallpaper = it))
                 }
             }
 

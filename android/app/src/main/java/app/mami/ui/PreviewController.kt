@@ -17,7 +17,7 @@ class PreviewController(
     override var appearance by mutableStateOf(appearance)
         private set
 
-    override fun setAppearance(appearance: Appearance) {
+    override fun changeAppearance(appearance: Appearance) {
         this.appearance = appearance
     }
 

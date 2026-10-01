@@ -59,7 +59,7 @@ class AppController(private val graph: AppGraph, scope: CoroutineScope) : BaseUi
 
     var playgroundOpen by mutableStateOf(false)
 
-    override fun setAppearance(appearance: Appearance) {
+    override fun changeAppearance(appearance: Appearance) {
         this.appearance = appearance
         settings.palette = appearance.palette.name
         settings.darkMode = appearance.darkMode.name

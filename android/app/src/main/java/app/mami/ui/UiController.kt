@@ -32,7 +32,7 @@ interface UiController {
     var partnerSheetOpen: Boolean
     val appearance: Appearance
 
-    fun setAppearance(appearance: Appearance)
+    fun changeAppearance(appearance: Appearance)
 
     /** Runs a user action, showing progress and a friendly error if it fails. */
     fun run(action: suspend () -> Unit, onSuccess: () -> Unit = {})
