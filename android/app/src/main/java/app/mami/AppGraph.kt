@@ -2,6 +2,7 @@ package app.mami
 
 import android.content.Context
 import androidx.room.Room
+import app.mami.calls.CallManager
 import app.mami.data.Api
 import app.mami.data.CryptoStore
 import app.mami.data.Realtime
@@ -49,6 +50,12 @@ class AppGraph(context: Context) {
         linkPreviewer = LinkPreviewer(http),
         scope = scope,
     )
+
+    /** Voice and video calls over WebRTC. */
+    val calls = CallManager(context, api, messenger, notifications).also { manager ->
+        messenger.calls = manager
+        messenger.callHandler = manager::onSignal
+    }
 
     /** Simulated partner for the debug playground. */
     val demo: DemoBackend by lazy { DemoBackend(scope, media) }

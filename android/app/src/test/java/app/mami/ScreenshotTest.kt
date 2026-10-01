@@ -20,6 +20,8 @@ import app.mami.ui.MamiScreens
 import app.mami.ui.Overlay
 import app.mami.ui.PreviewController
 import app.mami.ui.SignInStep
+import app.mami.calls.CallPhase
+import app.mami.ui.call.CallOverlay
 import app.mami.ui.chat.MediaViewer
 import app.mami.ui.chat.MessageActionsSheet
 import app.mami.ui.chat.MessageDetailsSheet
@@ -188,6 +190,33 @@ class ScreenshotTest {
             MediaViewer(ui.backend, viewable(messages, ui.backend, photo.id), photo.id, "Maya", onShowInChat = {}, onDismiss = {})
         }
     }
+
+    @Test fun callIncoming() = shot("24-call-incoming", setup = {
+        skipPairing()
+        calls.preview(CallPhase.Incoming, video = true, outgoing = false)
+    }) { CallOverlay(it) }
+
+    @Test fun callRinging() = shot("25-call-ringing", setup = {
+        skipPairing()
+        updatePartnerStatus { it.copy(batteryPercent = 23, charging = false) }
+        calls.preview(CallPhase.Ringing, video = false)
+    }) { CallOverlay(it) }
+
+    @Test fun callConnected() = shot("26-call-voice", setup = {
+        skipPairing()
+        calls.preview(CallPhase.Connected, video = false)
+    }) { CallOverlay(it) }
+
+    @Test fun callVideo() = shot("27-call-video", setup = {
+        skipPairing()
+        calls.preview(CallPhase.Connected, video = true)
+        calls.partnerTogglesCamera()
+    }) { CallOverlay(it) }
+
+    @Test fun chatCalls() = shot("28-chat-calls", setup = {
+        skipPairing()
+        showcaseCalls()
+    })
 
     @Test fun playground() {
         val controller = AppController(AppGraph(ApplicationProvider.getApplicationContext()), MainScope())

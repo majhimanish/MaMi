@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Battery6Bar
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
@@ -115,6 +117,7 @@ import app.mami.ui.components.HeartBurst
 import app.mami.ui.components.SignalBars
 import app.mami.ui.components.StatusPill
 import app.mami.ui.components.batteryColor
+import app.mami.ui.call.rememberCallStarter
 import app.mami.ui.components.heartWallpaper
 import app.mami.ui.theme.Mami
 import kotlinx.coroutines.delay
@@ -149,6 +152,7 @@ fun ChatScreen(ui: UiController) {
     val hints = partnerHints(status, presence, name, now)
 
     val composer = remember { ComposerState() }
+    val startCall = rememberCallStarter(backend.calls)
     var details by remember { mutableStateOf<MessageEntity?>(null) }
     var actionsFor by remember { mutableStateOf<MessageEntity?>(null) }
     var viewer by remember { mutableStateOf<String?>(null) }
@@ -258,6 +262,7 @@ fun ChatScreen(ui: UiController) {
                             hint = hints.firstOrNull(),
                             now = now,
                             onOpenPartner = { ui.partnerSheetOpen = true },
+                            onCall = startCall,
                             onSearch = { searching = true },
                             onMedia = { ui.overlay = Overlay.Media },
                             onStarred = { ui.overlay = Overlay.Starred },
@@ -308,6 +313,7 @@ fun ChatScreen(ui: UiController) {
                         progress = progress,
                         actions = bubbleActions,
                         onDetails = { details = it },
+                        onCall = startCall,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -395,6 +401,7 @@ private fun ChatTopBar(
     hint: Hint?,
     now: Long,
     onOpenPartner: () -> Unit,
+    onCall: (video: Boolean) -> Unit,
     onSearch: () -> Unit,
     onMedia: () -> Unit,
     onStarred: () -> Unit,
@@ -444,10 +451,19 @@ private fun ChatTopBar(
                         }
                     }
                 }
-                IconButton(onClick = onSearch) { Icon(Icons.Filled.Search, contentDescription = "Search messages") }
+                IconButton(onClick = { onCall(true) }) { Icon(Icons.Filled.Videocam, contentDescription = "Video call") }
+                IconButton(onClick = { onCall(false) }) { Icon(Icons.Filled.Call, contentDescription = "Voice call") }
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Search") },
+                            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                            onClick = {
+                                menu = false
+                                onSearch()
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text("Media, links and files") },
                             leadingIcon = { Icon(Icons.Filled.PermMedia, contentDescription = null) },
@@ -616,6 +632,7 @@ private fun Conversation(
     progress: Map<String, Float>,
     actions: BubbleActions,
     onDetails: (MessageEntity) -> Unit,
+    onCall: (video: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val backend = ui.backend
@@ -683,6 +700,7 @@ private fun Conversation(
                     when (message.kind) {
                         MessageKind.NUDGE -> NudgeSticker(message, partnerName) { onDetails(message) }
                         MessageKind.ALERT -> BatteryAlertCard(message, partnerName) { onDetails(message) }
+                        MessageKind.CALL -> CallBubble(message, partnerName) { onCall(message.mediaKind == MediaType.VIDEO) }
                         else -> MessageRow(
                             message = message,
                             first = first,

@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.mami.BuildConfig
+import app.mami.ui.call.CallOverlay
 import app.mami.ui.chat.ChatScreen
 import app.mami.ui.chat.MediaViewer
 import app.mami.ui.chat.StarredScreen
@@ -49,7 +50,10 @@ fun MamiRoot(vm: MainViewModel = viewModel()) {
     MamiTheme(controller.appearance) {
         SystemBars(dark = Mami.colors.isDark)
         Box(Modifier.fillMaxSize()) {
-            key(controller.demoMode) { MamiScreens(controller) }
+            key(controller.demoMode) {
+                MamiScreens(controller)
+                CallOverlay(controller)
+            }
             if (BuildConfig.DEBUG) {
                 PlaygroundButton(onClick = { controller.playgroundOpen = true })
                 if (controller.playgroundOpen) Playground(controller, onDismiss = { controller.playgroundOpen = false })

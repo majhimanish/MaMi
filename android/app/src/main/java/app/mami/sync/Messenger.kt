@@ -5,6 +5,9 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.util.Base64
 import android.util.Log
+import app.mami.calls.CallOutcome
+import app.mami.calls.CallSignals
+import app.mami.calls.Calls
 import app.mami.core.AlertKind
 import app.mami.core.Ciphertext
 import app.mami.core.CoreException
@@ -95,7 +98,7 @@ class Messenger(
     private val media: MediaLibrary,
     private val linkPreviewer: LinkPreviewer,
     private val scope: CoroutineScope,
-) : MamiBackend {
+) : MamiBackend, CallSignals {
     private val dao = db.messages()
     private val outbox = db.outbox()
 
@@ -162,6 +165,12 @@ class Messenger(
 
     @Volatile
     private var transfersRequested = false
+
+    /** Set by [app.mami.AppGraph]: the call engine. */
+    override lateinit var calls: Calls
+
+    @Volatile
+    private var inCall = false
     private val processedSeqs = LinkedHashSet<Long>()
     private var typingReset: Job? = null
     private var lastTypingSentAt = 0L
@@ -201,7 +210,8 @@ class Messenger(
 
     fun onBackground() {
         foreground = false
-        realtime.stop()
+        // A call keeps the live connection, so hang-ups and network changes still arrive.
+        if (!inCall) realtime.stop()
         launchSafely { publishStatus(force = false) }
     }
 
@@ -1021,7 +1031,7 @@ class Messenger(
                 dao.markDelivered(envelope.id, envelope.atMs)
                 return Handled.DONE
             }
-            KIND_MESSAGE, KIND_STATUS, KIND_EPHEMERAL -> Unit
+            KIND_MESSAGE, KIND_STATUS, KIND_EPHEMERAL, KIND_CALL -> Unit
             else -> return Handled.DONE
         }
         val body = envelope.body ?: return Handled.DONE
@@ -1160,8 +1170,49 @@ class Messenger(
         return Handled.DONE
     }
 
-    /** Calls are wired up by [CallManager]; until it's set, call signalling is ignored. */
+    /** Calls are wired up by [app.mami.AppGraph]; until then call signalling is ignored. */
     var callHandler: (suspend (Payload) -> Unit)? = null
+
+    // ---- calls (CallSignals) ------------------------------------------------------------
+
+    override val canCall: Boolean get() = _partner.value?.identity != null && _secure.value
+
+    override suspend fun sendCall(payload: Payload, push: Boolean) {
+        val partnerCurve = _partner.value?.identity?.curve25519 ?: throw NoSessionException()
+        val ciphertext = crypto.encrypt(partnerCurve, payload) ?: throw NoSessionException()
+        val request = SendRequestDto(newId(), KIND_CALL, ciphertext.messageType, ciphertext.body, push)
+        // The live connection is quickest; the first ring goes over HTTP so the server can push it.
+        if (!push && realtime.sendEphemeral(request)) return
+        api.send(request)
+    }
+
+    override fun stayConnected(active: Boolean) {
+        inCall = active
+        if (active) realtime.start() else if (!foreground) realtime.stop()
+    }
+
+    override suspend fun logCall(id: String, outgoing: Boolean, video: Boolean, outcome: String, startedAtMs: Long, durationMs: Long?) {
+        val now = System.currentTimeMillis()
+        val missed = !outgoing && outcome != CallOutcome.ANSWERED && outcome != CallOutcome.DECLINED
+        dao.insert(
+            MessageEntity(
+                id = id,
+                fromMe = outgoing,
+                kind = MessageKind.CALL,
+                body = "",
+                sentAtMs = startedAtMs,
+                sortAtMs = startedAtMs,
+                state = if (outgoing) MessageState.READ else MessageState.DELIVERED,
+                deliveredAtMs = startedAtMs,
+                readAtMs = if (missed && !(chatVisible && foreground)) null else now,
+                // There's nothing to acknowledge: both phones write their own call entry.
+                readReceiptSent = true,
+                mediaKind = if (video) MediaType.VIDEO else MediaType.VOICE,
+                mediaDurationMs = durationMs,
+                callOutcome = outcome,
+            ),
+        )
+    }
 
     private suspend fun onCallPayload(payload: Payload) {
         callHandler?.invoke(payload)
@@ -1249,6 +1300,7 @@ class Messenger(
         const val KIND_STATUS = "status"
         const val KIND_EPHEMERAL = "ephemeral"
         const val KIND_DELIVERED = "delivered"
+        const val KIND_CALL = "call"
         const val MIN_ONE_TIME_KEYS = 5
         const val ONE_TIME_KEY_BATCH = 20
         const val SYNC_PAGE_SIZE = 500

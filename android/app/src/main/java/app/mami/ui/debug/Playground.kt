@@ -232,6 +232,27 @@ fun Playground(controller: AppController, onDismiss: () -> Unit) {
                     }
                 }
 
+                Section("Calls") {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Action("📞 Maya calls you") {
+                            demo.calls.incoming(video = false)
+                            onDismiss()
+                        }
+                        Action("📹 Maya video-calls you") {
+                            demo.calls.incoming(video = true)
+                            onDismiss()
+                        }
+                        Action("☎️ Call Maya") {
+                            demo.calls.start(video = false)
+                            onDismiss()
+                        }
+                        Action("📴 Maya hangs up") { demo.calls.partnerHangsUp() }
+                        Action("📶 Her connection drops") { demo.calls.partnerReconnects() }
+                        Action("🎥 Her camera on/off") { demo.calls.partnerTogglesCamera() }
+                        Action("🔇 She mutes/unmutes") { demo.calls.partnerTogglesMute() }
+                    }
+                }
+
                 Section("Maya does something to a message") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Action("❤️ Reacts to mine") { demo.partnerReacts() }

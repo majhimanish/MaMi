@@ -1,6 +1,7 @@
 package app.mami.demo
 
 import android.net.Uri
+import app.mami.calls.CallOutcome
 import app.mami.core.DeviceStatus
 import app.mami.core.LinkPreview
 import app.mami.core.NetworkKind
@@ -106,6 +107,18 @@ class DemoBackend(
 
     private val _progress = MutableStateFlow<Map<String, Float>>(emptyMap())
     override val transferProgress: StateFlow<Map<String, Float>> = _progress.asStateFlow()
+
+    /** Pretend calls with Maya; she answers when [autoReply] is on. */
+    override val calls = DemoCalls(scope, autoAnswer = { autoReply }) { id, outgoing, video, outcome, startedAt, duration ->
+        val missed = !outgoing && outcome != CallOutcome.ANSWERED && outcome != CallOutcome.DECLINED
+        val message = MessageEntity(
+            id = id, fromMe = outgoing, kind = MessageKind.CALL, body = "", sentAtMs = startedAt, sortAtMs = startedAt,
+            state = if (outgoing) MessageState.READ else MessageState.DELIVERED, deliveredAtMs = startedAt,
+            readAtMs = if (missed && !chatVisible) null else clock(), readReceiptSent = true,
+            mediaKind = if (video) MediaType.VIDEO else MediaType.VOICE, mediaDurationMs = duration, callOutcome = outcome,
+        )
+        _messages.update { (it + message).sortedBy(MessageEntity::sortAtMs) }
+    }
 
     override val partnerName: String get() = _partner.value?.displayName ?: "Your partner"
     override var email: String? = null
@@ -585,6 +598,21 @@ class DemoBackend(
             theirs(22, maker.document(), "Here's the plan 🗺️"),
             mine(18, maker.voice(3.2)).copy(theirReaction = "❤️"),
             theirs(12, sunset, "").copy(viewOnce = true),
+        )
+        _messages.update { (it + added).sortedBy(MessageEntity::sortAtMs) }
+    }
+
+    /** A missed call from her and a call we had, for screenshots. */
+    fun showcaseCalls() {
+        val now = clock()
+        fun call(minutesAgo: Long, outgoing: Boolean, video: Boolean, outcome: String, minutes: Long?) = MessageEntity(
+            UUID.randomUUID().toString(), outgoing, MessageKind.CALL, "", sentAtMs = now - minutesAgo * MINUTE, sortAtMs = now - minutesAgo * MINUTE,
+            state = MessageState.READ, readAtMs = now, readReceiptSent = true, mediaKind = if (video) MediaType.VIDEO else MediaType.VOICE,
+            mediaDurationMs = minutes?.let { it * MINUTE + 17_000 }, callOutcome = outcome,
+        )
+        val added = listOf(
+            call(20, outgoing = false, video = false, outcome = CallOutcome.MISSED, minutes = null),
+            call(15, outgoing = true, video = true, outcome = CallOutcome.ANSWERED, minutes = 23),
         )
         _messages.update { (it + added).sortedBy(MessageEntity::sortAtMs) }
     }

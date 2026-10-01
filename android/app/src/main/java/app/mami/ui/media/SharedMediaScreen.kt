@@ -121,7 +121,13 @@ fun SharedMediaScreen(ui: UiController, partnerName: String, onBack: () -> Unit,
                         Column {
                             Text("Shared with $partnerName", style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "${photos.size + videos.size} photos & videos · ${voice.size} voice · ${links.size} links · ${files.size} files",
+                                listOf(
+                                    plural(photos.size, "photo"),
+                                    plural(videos.size, "video"),
+                                    plural(voice.size, "voice message"),
+                                    plural(links.size, "link"),
+                                    plural(files.size, "file"),
+                                ).joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -141,7 +147,8 @@ fun SharedMediaScreen(ui: UiController, partnerName: String, onBack: () -> Unit,
             }
         },
     ) { padding ->
-        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().padding(padding)) { page ->
+        // Pages fill the height; the pager would otherwise centre a short list.
+        HorizontalPager(state = pager, verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxSize().padding(padding)) { page ->
             when (Shelf.entries[page]) {
                 Shelf.PHOTOS -> Grid(photos, Shelf.PHOTOS, ui, onOpen)
                 Shelf.VIDEOS -> Grid(videos, Shelf.VIDEOS, ui, onOpen)
@@ -154,7 +161,7 @@ fun SharedMediaScreen(ui: UiController, partnerName: String, onBack: () -> Unit,
                 Shelf.LINKS -> if (links.isEmpty()) {
                     Empty(Shelf.LINKS)
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
                         monthHeaders(links.map { it.message }) { index -> LinkRow(links[index], partnerName, onClick = { Files.openUrl(context, links[index].url) }, onLongClick = { onShowInChat(links[index].message.id) }) }
                     }
                 }
@@ -175,6 +182,8 @@ fun SharedMediaScreen(ui: UiController, partnerName: String, onBack: () -> Unit,
 
 private val monthFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
 
+private fun plural(count: Int, word: String) = "$count $word" + if (count == 1) "" else "s"
+
 private fun month(ms: Long): String = monthFormat.format(Date(ms))
 
 @Composable
@@ -184,7 +193,7 @@ private fun Grid(items: List<MessageEntity>, shelf: Shelf, ui: UiController, onO
         return
     }
     val groups = remember(items) { items.groupBy { month(it.sortAtMs) }.toList() }
-    LazyVerticalGrid(columns = GridCells.Adaptive(110.dp), contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    LazyVerticalGrid(columns = GridCells.Adaptive(110.dp), modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         groups.forEach { (label, monthItems) ->
             item(span = { GridItemSpan(maxLineSpan) }, key = "h-$label") { MonthHeader(label) }
             items(monthItems, key = { it.id }) { message ->
@@ -210,7 +219,7 @@ private fun Listing(items: List<MessageEntity>, shelf: Shelf, row: @Composable (
         Empty(shelf)
         return
     }
-    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         monthHeaders(items) { index -> row(items[index]) }
     }
 }

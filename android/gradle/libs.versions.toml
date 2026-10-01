@@ -14,6 +14,7 @@ androidx-lifecycle = "2.11.0"
 androidx-room = "2.8.5"
 androidx-work = "2.10.0"
 coil = "3.6.3"
+webrtc = "1.3.10"
 coroutines = "1.11.0"
 firebase-bom = "33.7.0"
 jna = "5.19.1"
@@ -43,6 +44,8 @@ androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "androidx
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "androidx-room" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "androidx-work" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+# Google's WebRTC, prebuilt and published to Maven Central by Stream (the org.webrtc API).
+webrtc = { module = "io.getstream:stream-webrtc-android", version.ref = "webrtc" }
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebase-bom" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }

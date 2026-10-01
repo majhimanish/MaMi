@@ -15,6 +15,8 @@ import androidx.core.app.Person
 import androidx.core.content.ContextCompat
 import app.mami.MainActivity
 import app.mami.R
+import app.mami.calls.CallActionReceiver
+import app.mami.calls.CallIntents
 import app.mami.data.db.MediaType
 import app.mami.data.db.MessageEntity
 import app.mami.data.db.MessageKind
@@ -38,9 +40,107 @@ class Notifications(private val context: Context) {
                 NotificationChannel(CHANNEL_ALERTS, "Partner's phone", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "When your partner's battery is about to run out"
                 },
+                NotificationChannel(CHANNEL_CALLS, "Incoming calls", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Voice and video calls from your partner"
+                    // MaMi plays the ringtone itself, so it can loop and stop the moment you answer.
+                    setSound(null, null)
+                    enableVibration(false)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                },
+                NotificationChannel(CHANNEL_ONGOING_CALL, "Ongoing call", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Shown while you're on a call"
+                    setSound(null, null)
+                },
             ),
         )
     }
+
+    // ---- calls ----
+
+    /** Rings on the lock screen (full screen) or as a heads-up, with Answer and Decline. */
+    @SuppressLint("MissingPermission") // checked by allowed()
+    fun showIncomingCall(partnerName: String, video: Boolean) {
+        if (!allowed()) return
+        val person = Person.Builder().setName(partnerName.ifBlank { "Your partner" }).setImportant(true).build()
+        val show = callIntent(CallIntents.ACTION_SHOW, 10)
+        val answer = callIntent(CallIntents.ACTION_ANSWER, 11)
+        val decline = PendingIntent.getBroadcast(
+            context,
+            12,
+            Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_DECLINE),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_CALLS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(ContextCompat.getColor(context, R.color.brand))
+            .setContentTitle(partnerName)
+            .setContentText(if (video) "Incoming video call" else "Incoming voice call")
+            .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, decline, answer).setIsVideo(video))
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(show)
+            .setFullScreenIntent(show, true)
+            .build()
+        manager.notify(ID_INCOMING_CALL, notification)
+    }
+
+    fun cancelIncomingCall() = manager.cancel(ID_INCOMING_CALL)
+
+    @SuppressLint("MissingPermission") // checked by allowed()
+    fun showMissedCall(partnerName: String, video: Boolean) {
+        if (!allowed()) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(ContextCompat.getColor(context, R.color.brand))
+            .setContentTitle(if (video) "Missed video call" else "Missed voice call")
+            .setContentText("${partnerName.ifBlank { "Your partner" }} tried to call you")
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setAutoCancel(true)
+            .setContentIntent(openApp())
+            .build()
+        manager.notify(ID_MISSED_CALL, notification)
+    }
+
+    /** The notification of the call foreground service: who, how long, and Hang up. */
+    fun ongoingCall(context: Context, partnerName: String, video: Boolean, connectedAtMs: Long?): android.app.Notification {
+        val person = Person.Builder().setName(partnerName.ifBlank { "Your partner" }).setImportant(true).build()
+        val hangUp = PendingIntent.getBroadcast(
+            context,
+            13,
+            Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_HANG_UP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return NotificationCompat.Builder(context, CHANNEL_ONGOING_CALL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(ContextCompat.getColor(context, R.color.brand))
+            .setContentTitle(partnerName)
+            .setContentText(if (video) "Video call" else "Voice call")
+            .setStyle(NotificationCompat.CallStyle.forOngoingCall(person, hangUp).setIsVideo(video))
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setOngoing(true)
+            .setUsesChronometer(connectedAtMs != null)
+            .setWhen(connectedAtMs ?: System.currentTimeMillis())
+            .setShowWhen(connectedAtMs != null)
+            .setContentIntent(callIntent(CallIntents.ACTION_SHOW, 14))
+            .build()
+    }
+
+    /** Starts the call timer in the notification once the call connects. */
+    @SuppressLint("MissingPermission") // checked by allowed()
+    fun updateOngoingCall(context: Context, partnerName: String, video: Boolean, connectedAtMs: Long?) {
+        if (!allowed()) return
+        manager.notify(ID_ONGOING_CALL, ongoingCall(context, partnerName, video, connectedAtMs))
+    }
+
+    private fun callIntent(action: String, code: Int): PendingIntent = PendingIntent.getActivity(
+        context,
+        code,
+        Intent(context, MainActivity::class.java).setAction(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     /** Shows the unread conversation as one notification. */
     @SuppressLint("MissingPermission") // checked by allowed()
@@ -91,12 +191,18 @@ class Notifications(private val context: Context) {
         const val CHANNEL_MESSAGES = "messages"
         const val CHANNEL_NUDGES = "nudges"
         const val CHANNEL_ALERTS = "alerts"
+        const val CHANNEL_CALLS = "calls"
+        const val CHANNEL_ONGOING_CALL = "ongoing_call"
         private const val ID_CONVERSATION = 1
+        private const val ID_INCOMING_CALL = 2
+        private const val ID_MISSED_CALL = 3
+        const val ID_ONGOING_CALL = 4
 
         fun preview(message: MessageEntity, partnerName: String): String = when (message.kind) {
             MessageKind.NUDGE -> nudgeText(message.body)
             MessageKind.ALERT -> "🔋 ${partnerName.ifBlank { "Your partner" }}'s phone is at ${message.batteryPercent ?: "a few"}% and may switch off soon"
             MessageKind.MEDIA -> mediaLabel(message) + message.body.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+            MessageKind.CALL -> if (message.mediaKind == MediaType.VIDEO) "📹 Missed video call" else "📞 Missed voice call"
             else -> message.body
         }
 

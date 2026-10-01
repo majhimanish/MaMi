@@ -3,3 +3,7 @@
 -keepclassmembers class * extends com.sun.jna.** { public *; }
 -keep class app.mami.core.** { *; }
 -dontwarn java.awt.**
+
+# WebRTC calls into Java from native code by name.
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**

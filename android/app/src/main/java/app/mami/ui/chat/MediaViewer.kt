@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -75,6 +76,7 @@ import app.mami.sync.MamiBackend
 import app.mami.sync.Notifications
 import app.mami.ui.Files
 import app.mami.ui.Format
+import app.mami.ui.rememberBase64Image
 import coil3.compose.AsyncImage
 import java.io.File
 import kotlinx.coroutines.delay
@@ -138,7 +140,7 @@ fun MediaViewer(
                         Text("This is no longer on your phone.", color = Color.White)
                     }
                     message.mediaKind == MediaType.VIDEO -> VideoPlayer(file, active = page == pager.currentPage, chrome = chrome, onTap = { chrome = !chrome })
-                    else -> ZoomableImage(file, onTap = { chrome = !chrome }, onZoom = { if (page == pager.currentPage) zoomed = it })
+                    else -> ZoomableImage(message, file, onTap = { chrome = !chrome }, onZoom = { if (page == pager.currentPage) zoomed = it })
                 }
             }
             AnimatedVisibility(visible = chrome, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
@@ -199,7 +201,8 @@ fun MediaViewer(
 
 /** Pinch to zoom, drag when zoomed, double-tap to zoom in or out. One finger at normal size swipes pages. */
 @Composable
-private fun ZoomableImage(file: File, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
+private fun ZoomableImage(message: MessageEntity, file: File, onTap: () -> Unit, onZoom: (Boolean) -> Unit) {
+    val thumb = rememberBase64Image(message.mediaThumb)
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     fun set(newScale: Float, newOffset: Offset) {
@@ -238,19 +241,17 @@ private fun ZoomableImage(file: File, onTap: () -> Unit, onZoom: (Boolean) -> Un
             },
         contentAlignment = Alignment.Center,
     ) {
-        AsyncImage(
-            model = file,
-            contentDescription = "Photo",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offset.x
-                    translationY = offset.y
-                },
-        )
+        val transform = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+            }
+        // The tiny preview shows instantly while the full photo loads.
+        if (thumb != null) Image(thumb, contentDescription = null, contentScale = ContentScale.Fit, modifier = transform)
+        AsyncImage(model = file, contentDescription = "Photo", contentScale = ContentScale.Fit, modifier = transform)
     }
 }
 

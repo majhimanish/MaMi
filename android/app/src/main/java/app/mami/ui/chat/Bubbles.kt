@@ -37,6 +37,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CallMade
+import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.filled.PhoneMissed
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.BatteryAlert
@@ -48,6 +51,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -484,6 +488,59 @@ fun linkified(text: String, color: Color): AnnotatedString {
                     val url = if (link.startsWith("http", ignoreCase = true)) link else "https://$link"
                     addLink(LinkAnnotation.Url(url, style), at, at + link.length)
                     from = at + link.length
+                }
+            }
+        }
+    }
+}
+
+/** A call in the chat: who called, how long, or that it was missed. Tap to call back. */
+@Composable
+fun CallBubble(message: MessageEntity, partnerName: String, onCallBack: () -> Unit) {
+    val video = message.mediaKind == MediaType.VIDEO
+    val missed = message.callOutcome != "ANSWERED"
+    val tint = if (missed && !message.fromMe) Mami.colors.bad else MaterialTheme.colorScheme.primary
+    val title = when {
+        message.callOutcome == "ANSWERED" -> if (message.fromMe) "You called $partnerName" else "$partnerName called you"
+        message.fromMe && message.callOutcome == "DECLINED" -> "$partnerName couldn't talk"
+        message.fromMe && message.callOutcome == "BUSY" -> "$partnerName was on another call"
+        message.fromMe && message.callOutcome == "FAILED" -> "Call didn't connect"
+        message.fromMe -> "No answer"
+        message.callOutcome == "DECLINED" -> "You declined a call"
+        else -> if (video) "Missed video call" else "Missed voice call"
+    }
+    val detail = buildString {
+        append(if (video) "Video call" else "Voice call")
+        message.mediaDurationMs?.takeIf { message.callOutcome == "ANSWERED" }?.let { append(" · ").append(Notifications.duration(it)) }
+        append(" · ").append(Format.time(message.sentAtMs))
+    }
+    Box(Modifier.fillMaxWidth().padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
+        Surface(
+            onClick = onCallBack,
+            shape = CircleShape,
+            color = if (missed && !message.fromMe) Mami.colors.bad.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Row(Modifier.padding(start = 8.dp, end = 18.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(CircleShape).background(tint.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                    Icon(
+                        when {
+                            video -> Icons.Filled.Videocam
+                            missed && !message.fromMe -> Icons.Filled.PhoneMissed
+                            message.fromMe -> Icons.AutoMirrored.Filled.CallMade
+                            else -> Icons.AutoMirrored.Filled.CallReceived
+                        },
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Column(Modifier.padding(start = 10.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall, color = if (missed && !message.fromMe) Mami.colors.bad else MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        detail + if (missed) " · tap to call back" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

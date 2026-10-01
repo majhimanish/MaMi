@@ -44,6 +44,9 @@ interface MamiBackend {
     val shares: StateFlow<Set<ShareKind>>
     val quickStatus: StateFlow<SavedQuickStatus?>
 
+    /** Voice and video calls. */
+    val calls: app.mami.calls.Calls
+
     /** Upload and download progress of attachments, 0..1, by message id. */
     val transferProgress: StateFlow<Map<String, Float>>
 
